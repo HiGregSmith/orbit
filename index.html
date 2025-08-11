@@ -1,0 +1,3904 @@
+<!doctype html>
+<html>
+    <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+        <title>Babylon.js sample code</title>
+
+        <!-- Babylon.js -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/dat-gui/0.6.2/dat.gui.min.js"></script>
+        <script src="https://assets.babylonjs.com/generated/Assets.js"></script>
+        <script src="https://cdn.babylonjs.com/recast.js"></script>
+        <script src="https://cdn.babylonjs.com/ammo.js"></script>
+        <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
+        <script src="https://cdn.babylonjs.com/cannon.js"></script>
+        <script src="https://cdn.babylonjs.com/Oimo.js"></script>
+        <script src="https://cdn.babylonjs.com/earcut.min.js"></script>
+        <script src="https://cdn.babylonjs.com/babylon.js"></script>
+        <script src="https://cdn.babylonjs.com/materialsLibrary/babylonjs.materials.min.js"></script>
+        <script src="https://cdn.babylonjs.com/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+        <script src="https://cdn.babylonjs.com/postProcessesLibrary/babylonjs.postProcess.min.js"></script>
+        <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.js"></script>
+        <script src="https://cdn.babylonjs.com/serializers/babylonjs.serializers.min.js"></script>
+        <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+        <script src="https://cdn.babylonjs.com/addons/babylonjs.addons.min.js"></script>
+        <script src="https://cdn.babylonjs.com/inspector/babylon.inspector.bundle.js"></script>
+
+        <style>
+            html,
+            body {
+                overflow: hidden;
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+
+            #renderCanvas {
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+            }
+
+            #canvasZone {
+                width: 100%;
+                height: 100%;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="canvasZone"><canvas id="renderCanvas"></canvas></div>
+        <script>
+                    var canvas = document.getElementById("renderCanvas");
+
+                    var startRenderLoop = function (engine, canvas) {
+                        engine.runRenderLoop(function () {
+                            if (sceneToRender && sceneToRender.activeCamera) {
+                                sceneToRender.render();
+                            }
+                        });
+                    }
+
+                    var engine = null;
+        var scene = null;
+        var sceneToRender = null;
+        var createDefaultEngine = function() { return new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true,  disableWebGL2Support: false}); };
+        
+// starting with https://dev.to/omar4ur/create-a-satellite-tracker-from-scratch-in-30-lines-of-javascript-32gk
+// using https://github.com/shashwatak/satellite-js
+
+var credits = Array()
+credits.push(["BabylonJS","https://babylonjs.com/","JavaScript library and 3D engine for displaying real time 3D graphics in a web browser via HTML5.","[Apache License 2.0]","https://github.com/BabylonJS/Babylon.js/blob/master/license.md"])
+credits.push(["CelesTrak","https://celestrak.org","Making available the satellite orbital parameters, coordinating development of publicly-available SGP4 code, and providing extensive documentation. (Please consider donating to support non-profit CelesTrak data availability.)"]);
+credits.push(["United States Space Command","https://www.space-track.org","Continuous update of satellite data provided to CelesTrak."])
+credits.push(["Shashwat Kandadai","https://github.com/shashwatak/satellite-js","JavaScript library implementing SGP4.", "[MIT License]","https://github.com/shashwatak/satellite-js/blob/develop/LICENSE.md"])
+credits.push(["European Space Agency (ESA)","https://sdup.esoc.esa.int/discosweb/statistics/","Definition of Orbital Regimes."])
+
+
+// define functions for simple circular slerp between calculated positions
+rEarth = 6378.135
+var gui;
+var camera;
+
+var updateCount = 0
+const useEcf = false; // false is eci
+var regimes = null;
+// https://sdup.esoc.esa.int/discosweb/statistics/
+const orbitDescriptions = [
+    ["GEO", "Geostationary Orbit (protected)", "i < 15°, 35586 km < hp & ha < 35986 km"],
+    ["GEOu", "Geostationary Orbit (unprotected)", "15 < i < 25°, 35586 km < hp & ha < 35986 km"],
+    ["IGO", "Inclined Geosynchronous Orbit", "37948 km < a < 46380 km, e < 0.25, 25° < i < 180°"],
+    ["EGO", "Extended Geostationary Orbit", "37948 km < a < 46380 km, e < 0.25, i < 25°"],
+    ["NSO", "Navigation Satellites Orbit", "50° < i < 70°, 18100 km < hp & ha < 24300 km"],
+    ["GTO", "GEO Transfer Orbit", "i < 90°, hp < 2000 km, 31570 km < ha < 40002 km"],
+    ["MEO", "Medium Earth Orbit", "2000 km < hp & ha < 31570 km"],
+    ["GHO", "GEO-superGEO Crossing Orbits", "31570 km < hp < 40002 km < ha"],
+    ["LEO", "Low Earth Orbit", "hp & ha < 2000 km"],
+    ["HAO", "High Altitude Earth Orbit", "hp & ha > 40002 km"],
+    ["MGO", "MEO-GEO Crossing Orbits", "2000 km < hp < 31570 km < ha < 40002 km"],
+    ["HEO", "Highly Eccentric Earth Orbit", "hp < 31570 km, ha > 40002 km"],
+    ["LMO", "LEO-MEO Crossing Orbits", "hp < 2000 km < ha < 31570 km"],
+    ["UFO", "Undefined Orbit", ""],
+    ["ESO", "Escape Orbits", ""],
+]
+
+const orbitVisual = new Map([// regimes object names by orbit:
+    ["LEO", [["LEO"], "within"]],
+    ["MEO", [["MEO"], "within"]],
+    ["GEO", [["GEO"], "within"]],
+    ["LMO", [["MEO"], "hp below, ha within"]],
+    ["GTO", [["MEO"], "hp below, ha above"]],
+    ["MGO", [["MEO", "GO"], "hp within lower, ha within upper"]],
+    ["HEO", [["GO"], "hp below, ha above"]],
+    ["GHO", [["GO"], "hp within, ha above"]],
+    ["HAO", [["GO"], "hp above , ha above"]],
+    ["NSO", [["NSO"], "within"]],
+    ["EGO", [["GEOu"], "above, within same inclination"]],
+    ["GEOu", [["GEO", "GEOu"], "within outer inclination"]],
+    ["IGO", [["GEOu"], "outside, higher inclination"]],
+])
+
+function toggleOrbitRegimes(button, orbit) {
+    const alpha = 0.2;
+    const inclinationalpha = 0.08;
+    const isOn = toggleButton(button)
+    console.log(`orbits ${isOn ? 'on' : 'off'}`, regimes)
+    if (regimes) {
+        regimes.forEach((r) => r.setEnabled(isOn))
+        return;
+    }
+
+    function nestedSpheres(altitudes, names) {
+        if (!names) names = altitudes.map(a => `alt ${a}km`)
+        const spheres = altitudes.map((alt, i) => BABYLON.MeshBuilder.CreateSphere(names[i], {
+            diameter: 2 * alt / 1000, segments: 32,
+        }, scene))
+
+        const csg2 = spheres.map((s) => BABYLON.CSG2.FromMesh(s))
+        for (var i = csg2.length-1; i > 0 ; i--) {
+            const s = csg2[i].subtract(csg2[i - 1])
+            csg2[i].dispose();
+            csg2[i] = s;
+        }
+
+        spheres.forEach((s, i, a) => {
+            const name = s.name;
+            s.dispose();
+            a[i] = csg2[i].toMesh(name, scene, { centerMesh: false })
+        })
+        csg2.forEach(c => c.dispose())
+        spheres.shift().dispose()
+        return spheres;
+    }
+    // in ECI
+    const altitudes = Array.of(0, 2000, 31570, 40002)
+    altitudes.forEach((alt, i, array) => array[i] += rEarth)
+    const spheres = nestedSpheres(altitudes, ["e", "LEO", "MEO", "GO"]);//altitudes.map(a=>""+a));
+
+    spheres.forEach((s, i, a) => {
+        const mat = new BABYLON.StandardMaterial(`alt ${altitudes[i + 1]}km`);
+        mat.diffuseColor = new BABYLON.Color3(0, i / a.length, 1);
+        mat.alpha = alpha;
+        s.material = mat;
+    });
+
+
+
+    function inclinationLimit(mesh, degrees, name) {
+
+
+        const side = (40002 + rEarth) / 1000
+        //shape[1].rotateByQuaternionToRef(BABYLON.Quaternion.RotationYawPitchRoll(0,0,15*Math.PI/180),shape[2]);
+        const numPoints = 4;
+        // need slope in degrees, and height of radius
+        // height/(diameterBottom/2) = adj/opp => 0.5*diameterBottom/height = tan(degrees*Math.PI/180
+
+        diameterBottom = 2 * Math.tan((90 - degrees) * Math.PI / 180) * side
+        //console.log("pyramid",side,diameterBottom)
+        var pyramid = BABYLON.MeshBuilder.CreateCylinder("pyramid", { height: side, diameterTop: 0, tessellation: 64, diameterBottom: diameterBottom, },);
+        pyramid.visibility = inclinationalpha;
+        pyramid.position.y += side / 2
+        pyramid.rotation.x = Math.PI;
+        pyramid.bakeCurrentTransformIntoVertices();
+        //pyramid.rebuildNormals()
+        pyramid.rotation.x = Math.PI;
+        var geo2, geoCSG, stepA, stepB, stepC;
+
+        stepA = BABYLON.CSG2.FromMesh(mesh);
+        mesh.dispose();
+
+        stepB = BABYLON.CSG2.FromMesh(pyramid, true);
+        stepC = stepA.subtract(stepB)
+        stepA.dispose();
+        stepB.dispose();
+        stepA = stepC;
+
+        stepB = BABYLON.CSG2.FromMesh(pyramid, false);
+        stepC = stepA.subtract(stepB)
+        stepA.dispose();
+        stepB.dispose();
+        stepA = stepC;
+
+        // would have preferred:
+        //const dispose = true;
+        // geo2 = BABYLON.CSG2.FromMesh(geo,false,dispose)
+        //     .subtract(BABYLON.CSG2.FromMesh(pyramid,true,dispose))
+        //     .subtract(BABYLON.CSG2.FromMesh(pyramid,false,dispose))
+        //     .toMesh("geo", scene, { centerMesh: false, dispose: dispose })
+        pyramid.dispose()
+        const result = stepA.toMesh(name || `incl ${degrees}`, scene, { centerMesh: false })
+        stepA.dispose()
+
+        return result
+    }
+
+    // GEO
+    const geoHeight = Array.of(35586, 35986)
+    geoHeight.forEach((alt, i, array) => array[i] += rEarth);
+    var geo = nestedSpheres(geoHeight)[0];
+    geo2 = inclinationLimit(geo, 15, "GEO")
+
+
+    var mat = new BABYLON.StandardMaterial(`geo`);
+    mat.emissiveColor = new BABYLON.Color3(0, 1, 0,);
+    mat.alpha = inclinationalpha;
+    geo2.material = mat;
+
+    // GEOu
+    // use existing geoHeight
+    geo = nestedSpheres(geoHeight)[0];
+    geou = inclinationLimit(geo, 25, "GEOu")
+
+    var mat = new BABYLON.StandardMaterial(`geou`);
+    mat.emissiveColor = new BABYLON.Color3(0, 1, 0,);
+    mat.alpha = inclinationalpha;
+    geou.material = mat;
+
+
+    // NSO "50° < i < 70°, 18100 km < hp < 24300 km, 18100 km < ha < 24300 km"
+    const nsoHeight = Array.of(18100, 24300)
+    nsoHeight.forEach((alt, i, array) => array[i] += rEarth);
+    const nso = nestedSpheres(nsoHeight)[0];
+    nso2 = inclinationLimit(nso, 70, "NSO")
+
+
+    mat = new BABYLON.StandardMaterial(`nso`);
+    mat.diffuseColor = new BABYLON.Color3(0, 1, 0,);
+    mat.emissiveColor = new BABYLON.Color3(0, 1, 0,);
+    mat.alpha = inclinationalpha;
+    nso2.material = mat;
+
+    spheres.push(geo2)
+    spheres.push(geou)
+    spheres.push(nso2)
+    regimes = spheres;
+    return regimes
+
+
+
+
+    // -- GEO protected: "i < 15°, 35586 km < hp < 35986 km, 35586 km < ha < 35986 km"
+    if (false) {
+        // box size:rEarth
+        // var box,csg1,csg2,csg3;
+        // box = BABYLON.MeshBuilder.CreateBox("test", { size: 2*rEarth/1000,});
+        // box.position.y += rEarth/1000;
+        // box.rotation.x = 15 * Math.PI/180;
+        // csg1 = BABYLON.CSG2.FromMesh(box,false); // false=use world
+        // box.dispose()
+
+        // box = BABYLON.MeshBuilder.CreateBox("test", { size: 2*rEarth/1000,});
+        // box.position.y += rEarth/1000;
+        // box.rotation.x = -15 * Math.PI/180;
+        // csg2 = BABYLON.CSG2.FromMesh(box,false); 
+        // csg3 = csg1.intersect(csg2) 
+        // csg1.dispose();
+        // csg2.dispose()
+
+        // box = CreateSphere("geo", {diameter: 2*rEarth/1000, segments: 64,})
+        // csg1 = BABYLON.CSG2.FromMesh(box,false);
+        // box.dispose()
+    }
+
+}
+var topDiv;
+
+class Tutorial {
+    constructor() {
+        this.textStructure = [
+            ['t',`Explore active satellites orbiting Earth.`,],
+
+            ['h',`Basic Controls`,`Select an orbital regime to show the satellites within that regime.`,],
+            
+            ['p',`"Table" (toggle on/off) shows the Names of satellites displayed.`,],
+            
+            ['p',`Selecting a satellite in the display or in the table will 1) highlight the table row, 2) show the name of the satellite in the 3d display, 3) show its path.`,],
+            
+            ['p',`Display starts at the current time and elapses at the rate per second shown ("1h" or "1m").`,],
+            
+            ['p',`Slow down (-) or speed up (+) time with the buttons below. Reset to the current time with "Now".`,],
+            
+            ['p',`Select Settings, then toggle "Small" to change satellite size.`,],
+            
+            ['p',`Settings > "Paths" displays all satellite orbit paths. Select "Paths" again for brighter.`,],
+            
+            ['h',`Orbits and ellipses`,
+            `Satellite orbits around the Earth are roughly described as ellipses, with Earth on a focus of that ellipse. Additional forces cause a difference from an ideal ellipse, forces such as gravity from the sun, moon, or Jupiter; Earth's non-uniform gravity, including tides; Solar wind; and atmospheric drag.`,],
+            
+            ['h',`Position`,
+            `A satellite's position is based on a detailed model, known as SGP4, derived from observations provided by United States Space Command and accessible to the general public through the non-profit CelesTrak. Accuracy of the model is limited to a few days, up to a week or two, within a date specified as "epoch".`,],
+            
+            ['h',`Paths`,
+            `Paths and lines are based on estimated ellipses from model parameters. The accuracy of displayed paths and lines are limited because of the rough ellipse estimation. With a long-running display, positions become less accurate over time and will diverge from the path shown. Neither the position nor the path are accurate at times far outside the epoch.`,],
+            
+            ['h',`Table`,`Expand the table ("<") for detailed information about each satellite.`,],
+            
+            ['L',`General Info`,
+            `Name`,`Name of the satellite`,
+            `Sat Id`,`Unique identifier`,
+            `satnum`,`NORAD Catalog Number`,
+            `orbit`,`orbital regimes of this satellite`,],
+            
+            ['L',`Orbit Shape`,
+            `a`, `length of semi-major axis, derived from Mean Motion and eccentricity`,
+            `e`, `eccentricity`,
+            `~Mot`, `Mean Motion, speed assuming circular orbit`,],
+            
+            ['L',`Orbit Altitudes (heights above Earth's average radius)`,
+            `ha`, `height of apoapsis (shown as amber sphere)`,
+            `hp`, `height of periapsis (shown as purple sphere)`,],
+            
+            ['L',`Orientation of elliptical orbit`,
+            `i`, `inclination from a reference plane`,
+            `RAAN`, `right ascension of the ascending node, angle from a reference direction`,
+            `ArgPeri`, `Argument of Periapsis, angle from ascending node to periapsis`,],
+            
+            ['L',`Position within orbit`,
+            `~Anom`, `Mean Anomoly, position of satellite in its orbit at epoch`,],
+            
+            ['L',``,
+            `epoch age`, `time since epoch, when these orbital parameters are most accurate.`,
+            `bstar`, `atmospheric drag`,],
+            
+            //`Orbital Regime Definitions`,
+            
+            ['h',`Orbital Regime`,
+            `Each Orbital Regime is defined by orbital parameters within specific ranges, which is displayed when you select the regime.`,],
+            
+            ['p',`For a 3d visualization of each regime, select "Visual" and note the "Visual:..." description shown after selecting a regime.`,],
+            
+            ['p',`The regime button's location in the table indicates the range of the satellite's height of apoapsis (ha) and height of periapsis (hp). Those with asterisk have a narrower height range (GEO is 35786 +/- 200), an addition inclination range (GTO, GEO, NSO), or another regime within it (NSO is entirely within MEO).`,],
+            
+            ['p',`Regimes in the right column, aside from NSO, are defined slightly differently. GEOu (unprotected GEO) is at GEO height and a slightly higher inclination (15 < i < 25). EGO and IGO are defined by semi-major axis, eccentricity,  and inclination.`,],
+            ]
+    }
+    show() {
+        
+        const div = document.createElement("div");
+        div.style ='position:fixed;top:20%;left:20%;bottom:20%;right:20%;z-index:10;background-color:#222;color:white;overflow-y:auto;font: 11pt Arial;padding:10pt;border-radius:5pt;'
+        
+        const htmlArray = Array.from(this.textStructure.map(array=>{
+            switch (array[0]) {
+                case 'p':
+                    return `<p>${array[1]}</p>`
+                case 't':
+                    return `<h1>${array[1]}</h1>`
+                case 'h':
+                    var elements = Array()
+                    elements.push(`<h2>${array[1]}</h2>`)
+                    for (var i =2;i<array.length;i++)
+                        elements.push(`<p>${array[i]}</p>`)
+                    return elements.join('')
+                case 'L':
+                    var elements = Array()
+                    elements.push(`<h3>${array[1]}</h3><ul>`)
+                    for (var i =2;i<array.length;i++) {
+                        elements.push(
+                            `<li><b>${array[i]}</b> - ${array[i+1]}</li>`)
+                        i++;
+                    }
+                    elements.push('</ul>')
+                    return elements.join('')
+                default:
+                    return '';
+            }
+        }))
+        
+        
+        
+        //for (var i=0; i<credits.length;i++) {
+        htmlArray.push(`<h2>Credits</h2>`)
+        for (var credit of credits) {
+            htmlArray.push(`<p><a href="${credit[1]}">${credit[0]}</a> - ${credit[2]}`)
+            if (credit.length>3) htmlArray.push(` <a href="${credit[4]}">${credit[3]}</a>`)
+            htmlArray.push(`</p>`)
+            
+        }
+        div.innerHTML = htmlArray.join('')
+        document.body.appendChild(div);
+        this.mainWindow = div;
+        
+    }
+    toggle() {
+        if (this.mainWindow) {
+            this.mainWindow.remove();
+            this.mainWindow = null;
+            return
+        }
+        this.show();
+    }
+}
+
+var tutorial = new Tutorial();
+function toggleTutorial(button) {
+    toggleButton(button)
+    tutorial.toggle();
+}
+class panelTable {
+
+    static randomCharSet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    static generateRandomString(length) {
+        let result = Array()//'';
+        for (let i = 0; i < length; i++) {
+            result.push(panelTable.randomCharSet.charAt(Math.floor(Math.random() * panelTable.randomCharSet.length)));
+        }
+        return result.join('');
+    }
+    constructor(id) { // 'right_nav'
+        this.toggleStates = [
+            () => { this.setVisibleColumns(["Name"]) },
+            () => { this.hideOnlyColumns([]) },
+        ]
+        this.toggleIndicators = ['&nbsp;&lt;&nbsp;&nbsp;', '&nbsp;&gt;&nbsp;&nbsp;']
+        this.id = id || panelTable.generateRandomString(10)
+
+        var styleText =
+            `        .tablecontainer {
+                
+
+    max-height: 70%; /* Set a fixed height for the container */ 
+    max-width: 70%; /* Set a fixed height for the container */ 
+    overflow: auto; /* Enable scrolling */ 
+    resize: horizontal;
+    border: 1px solid #ccc; /* Optional: Add a border */ 
+    position:fixed;  right:0px; top:80px;
+    z-index: 5;
+} 
+#${this.id} table { 
+    background-color: #0000ff33;
+    /*width: 40%; /* Make the table full width */ 
+    border-collapse: collapse; /* Collapse borders for a cleaner look */
+    z-index:4;
+    
+} 
+tr.highlight {
+                background-color: #00ff0033
+            } 
+#${this.id} :is(th, td,tr) { 
+    text-align: right; /* Align text to the left */ 
+    padding: 0px 4px; /* Add padding for cells */ 
+    margin: 0px; /* Add padding for cells */ 
+    /*border-spacing: 0px;*/ /* Add border-spacing for cells (applies with border: separate*/ 
+    border-width: 0px; /* Add padding for cells */ 
+    /*border: 1px solid #ddd;*/ /* Add a border to cells */ 
+    white-space: nowrap;
+} 
+    thead {
+      position: sticky;
+      top: 0;
+      background-color: #0000aaff; /* Match table background or use a contrasting color */
+      dex: 4; /* Ensure the header stays on top */
+    }
+
+            #${this.id} {
+                /*
+                width:100%; position:fixed; top:40px;
+                height:100%; position:fixed; right:0px;
+                margin-left: auto;margin-right: 0; 
+                */
+                
+                font-family: "Arial Narrow";/*,Arial,sans-serif; */
+                font-stretch: condensed;
+                font-size: 0.7em;/*7pt;*/
+                color: white;
+                text-align:center;
+                z-index:4;
+                
+            }
+            /*table#${this.id} {
+                border: 1px solid white
+            }
+            
+            /*
+            table,tr,td { /*tr#${this.id} {*/
+                border: 1px solid white;
+                border-collapse: collapse;
+            }*/
+            /* https://www.quora.com/How-do-I-make-a-scrollable-table-inside-a-fixed-container-using-CSS*/
+            
+
+ 
+
+            button {
+              font-size: inherit;
+            }
+            
+            button[aria-disabled="true"] {
+              opacity: 0.5;
+            }
+            
+            .annotate {
+              color: #366ed4;
+              font-style: italic;
+            }
+            
+            .invisible {
+                visibility: hidden;
+                /*display: none;*/
+            }
+            
+            .offscreen {
+              position: absolute;
+              width: 1px;
+              height: 1px;
+              overflow: hidden;
+              clip: rect(1px 1px 1px 1px);
+              clip: rect(1px, 1px, 1px, 1px);
+              font-size: 14px;
+              white-space: nowrap;
+            }`
+        // margin-left: auto; 
+        // margin-right: 0;
+        this.style = document.createElement("style")
+        this.style.textContent = styleText
+        document.head.appendChild(this.style);
+        //this.displayDefault = this.style.display.slice(0)
+
+        this.element = document.getElementById(this.id)
+        var div;
+        if (this.element) { this.element.remove(); this.element = null }
+        if (!this.element) {
+            div = document.createElement(`div`)//<div class="table-container">
+            div.className = 'tablecontainer';//List.add('tablecontainer')
+            // left 2190, right 2192
+            div.innerHTML = '<span style="color:white;background-color:#00ffff55; position:fixed;vertical-align: top; text-align: left;z-index:5;" onclick="panelRightTable.toggleColumns()" >&nbsp;&lt;&nbsp;&nbsp;</span>'
+            this.toggleElement = div.children[0]
+            //console.log("div", this.toggleElement, div)
+            this.element = document.createElement(`table`)
+            div.appendChild(this.element)
+            this.element.id = this.id
+            document.body.appendChild(div);
+        }
+
+        this.element.addEventListener("click", function (e) {
+            var tr = e.target;
+            var parentCount = 10
+
+            while (tr && tr.tagName != 'TR' && parentCount-- > 0) {
+                tr = tr.parentElement;
+            }
+            if (!tr) { console.log("TR not found"); return; }
+            console.log(e)
+            //console.log('selected row', tr.rowIndex, tr.children[0], tr.children[0].children[0]);
+            if (!tr.rowIndex) {
+                console.log("sorting row 0 (or unkown row)")
+
+                const getCellValue = (tr, idx) => tr.children[idx].innerText || tr.children[idx].textContent;
+
+                const comparer = (idx, asc) => (a, b) => ((v1, v2) => v1 !== '' && v2 !== '' &&
+                    !isNaN(v1) && !isNaN(v2) ? v1 - v2 : v1.toString().localeCompare(v2)
+                )(getCellValue(asc ? a : b, idx), getCellValue(asc ? b : a, idx));
+
+                // do the work...
+                //document.querySelectorAll('th').forEach(th => th.addEventListener('click', (() => {
+                // attribute: data-sort 0 == desc, 1 == asc
+                const th = e.target.closest('th')
+                const table = th.closest('table');
+                const ascending = (+th.getAttribute('data-sort') + 1) % 2
+                //console.log(table, th, ascending)
+                th.setAttribute('data-sort', ascending) // attr.name attr.value 
+
+                const tbody = table.querySelector('tbody');
+                const rows = Array.from(tbody.querySelectorAll('tr'))
+                tbody.innerHTML = ''
+                //rows.sort(comparer(Array.from(th.parentNode.children).indexOf(th), asc))
+                const columnIndex = Array.from(th.parentNode.children).indexOf(th)
+
+                // slow: rows.sort(comparer(columnIndex, asc))
+                rows.sort((x, y) => {
+
+                    const xValue = x.cells[columnIndex].textContent;
+                    const yValue = y.cells[columnIndex].textContent;
+
+                    const xNum = parseFloat(xValue);
+                    const yNum = parseFloat(yValue);
+                    var compare = xNum - yNum;
+                    if (isNaN(compare)) compare = xValue.localeCompare(yValue);
+
+                    return ascending ? compare : -compare;
+                });
+
+
+
+                //    .forEach(tr => tbody.appendChild(tr));
+                //})));
+                // fragment from https://stackoverflow.com/a/59283273
+                const fragment = new DocumentFragment();
+                for (let row of rows) {
+                    fragment.appendChild(row);
+                }
+
+                table.tBodies[0].appendChild(fragment);
+
+                return;
+            }
+
+
+            tr.className = "highlight"
+            const name = tr.children[0].textContent
+            //console.log("Name?", tr.children[0].textContent)
+
+
+
+            const satPointer = sats.filter(s => s.name == name)[0]
+            satPosition.UpdateLine(satPointer)
+            if (satPosition.visualClass.pickList.includes(satPointer.visual)) {
+                scene.activeCamera.setPosition(satPointer.visual.position);
+                scene.activeCamera.radius *= 1.2
+                satPosition.visualClass.ViewFrom(scene.activeCamera, satPointer)//.visual.viewFrom(camera1);
+            } else {
+                satPointer.visual.select()
+                satPointer.addLabel();
+            }
+
+
+
+        }, false);
+        // .on("click", "tr", function(e) {
+        //     console.log($(e.currentTarget).index() + 1);
+        // });
+
+        this.element.class = `listbox-area`
+
+        const fpPrecision = { L: 7, A: 4, E: 5, B: 5 }
+        // existing .toExponential(fractionDigits), .toFixed(fractionDigits), .toPrecision(precision), .toString([radix]) and toLocaleString(…)
+        const ageDisplay = (days) => {
+            const sign = (days < 0) ? '-' : '';
+            days = Math.abs(days)
+            const dint = Math.floor(days);
+            const dfrac = days - dint;
+            const hours = dfrac * 24;
+            return `${sign}${dint}d${hours.toFixed(2).padStart(5, '0')}h`
+
+        }
+        this.columnsdef = Array(
+            ['Name', s => `<span style="text-align:right;display: inline-block;float:right;">${s.name}</span>`],
+            ['Sat ID', s => (s.dataMap.get('OBJECT_ID'))],
+            ['satnum', s => (s.satrec.satnum)],
+            ['orbit', s => (s.regimes.join(','))],
+            ['i', s => (s.satrec.inclo * 180 / Math.PI).toFixed(fpPrecision.A)],
+            ['a', s => s.a.toPrecision(fpPrecision.L)],
+            ['ha', s => s.ha.toPrecision(fpPrecision.L)],
+            ['hp', s => s.hp.toPrecision(fpPrecision.L)],
+            ['e', s => s.satrec.ecco.toFixed(fpPrecision.E)],
+            ['ArgPer', s => (s.satrec.argpo * 180 / Math.PI).toFixed(fpPrecision.A)],
+            ['RAAN', s => (s.satrec.nodeo * 180 / Math.PI).toFixed(fpPrecision.A)],
+            ['~Anom', s => (s.satrec.mo * 180 / Math.PI).toFixed(fpPrecision.A)],
+            ['~Mot', s => (s.satrec.no * 180 / Math.PI).toFixed(fpPrecision.A)], // rad/min => deg/min
+            ['epoch age', s => (ageDisplay(satellite.jday(new Date()) - s.satrec.jdsatepoch))],
+            ['bstar', s => (s.satrec.bstar).toPrecision(fpPrecision.B)],
+        )
+        //this.hiddenColumnStyle = new CSSStyleSheet();//document.createElement(`style`);
+
+        if (false) {
+            for (var sheet of document.styleSheets) {
+                //console.log('sheet',sheet)
+                //if (sheet.hasOwnProperty('cssRules'))
+                var i = 0;
+                if (!sheet.href)
+                    for (var rule of sheet.cssRules) {
+                        if (rule.selectorText?.includes('td:nth-child(')) {
+                            this.hiddenColumnStyle = sheet;
+                            break;
+                        }
+                        // if (rule.selectorText?.includes('td:nth-child('))
+                        //   sheet.deleteRule(i)//console.log( "sel",rule.selectorText)
+                        // else
+                        //   i++
+                    }
+            }
+        }
+        for (var sheet of document.styleSheets) {
+            if (sheet.title == "hiddenColumnStyle") {
+                //this.hiddenColumnStyle = sheet;
+                while (sheet.cssRules.length)
+                    sheet.deleteRule(0)
+                //break;
+            }
+        }
+        if (!this.hiddenColumnStyle) {
+            this.hiddenColumnStyle = document.createElement(`style`);
+            this.hiddenColumnStyle.title = "hiddenColumnStyle"
+            document.head.appendChild(this.hiddenColumnStyle);
+        }
+        this.hiddenColumnStyle.textContent = "";
+        //console.log("type",typeof this.hiddenColumnStyle,this.hiddenColumnStyle)
+
+        this.emptyTable()
+        //`Satellites\nin\nOrbit
+        //     `<th>
+        // <tr><td>Name</td>         <td>2024-04A</td></tr>
+        // <tr><td>a</td>         <td>1000.0</td></tr>
+        // <tr><td>mean alt</td>         <td>1000</td></tr>
+        // <tr><td>e</td>         <td>0.003</td></tr>
+        // <tr><td>ha</td>         <td>1000.0</td></tr>
+        // <tr><td>hp</td>         <td>1000.0</td></tr>
+        // <tr><td>Regime</td>         <td>GEOp</td></tr>
+
+        // `
+        //     `<th>
+        // <tr><td>Name</td>         <td>2024-04A</td></tr>
+        // <tr><td>a</td>         <td>1000.0</td></tr>
+        // <tr><td>mean alt</td>         <td>1000</td></tr>
+        // <tr><td>e</td>         <td>0.003</td></tr>
+        // <tr><td>ha</td>         <td>1000.0</td></tr>
+        // <tr><td>hp</td>         <td>1000.0</td></tr>
+        // <tr><td>Regime</td>         <td>GEOp</td></tr>        `
+
+
+    }
+    getTableRow(sat) {
+        const row = document.createElement("tr")
+        row.id = sat.name;
+        row.innerHTML = this.columnsdef.map(c => { try { return `<td>${c[1](sat)}</td>` } catch { return 'n/a' } }).join('')
+        return row
+    }
+    async addRow_old(sat) {
+
+        const rowParts = Array()//.of(`<tr>`)
+        this.columnsdef.forEach(c => rowParts.push(`<td>${c[1](sat)}</td>`))
+        //rowParts.push(`</tr>`)
+        const row = this.element.tBodies[0].insertRow()
+        row.id = sat.name;
+        row.innerHTML = rowParts.join('')
+
+    }
+    highlightRowIndexById(idOrName, scroll) {
+        const row = this.element.rows.namedItem(idOrName)
+        row.className = "highlight"
+        if (scroll) row.scrollIntoView()
+    }
+    unhighlightAll() {
+        Array.from(this.element.rows).forEach((tr) => tr.className = "")
+    }
+    emptyTable() {
+        satPosition.enabledSatsTableDirty = true;
+        //const tableParts = Array.of(`<colgroup>`)
+        this.colgroup = document.createElement(`colgroup`);
+        this.colByHeading = new Map();
+        this.columnsdef.forEach((c) => {
+            const heading = `${c[0]}`;
+            //tableParts.push(`<col class="${c[0]}"/>`)
+            const col = document.createElement(`col`);
+            col.className = heading;
+            this.colByHeading.set(heading, col)
+            this.colgroup.appendChild(col)
+        })
+        //this.hideOnlyColumns([3]);
+        this.setVisibleColumns(["Name"])
+        this.toggleState = 0;
+        //for (var col of this.colgroup.children) console.log(col.className)
+        // get array of headings where index = column
+        //console.log(Array.from(this.colgroup.children).map((c) => c.className))
+        Array.from(this.colgroup.children).map((c, i) => [c.className, i])
+        //console.log(Object.keys(this.colgroup.children))
+        //console.log(this.colgroup.children.map((col)=>col.className))
+        //this.colByHeading.forEach((v,k)=>{ if (k!='Name') v.style.visibility = 'collapse'})
+        //this.colByHeading.get("orbit").style.visibility = 'collapse'
+
+        const row = document.createElement(`tr`);
+        this.columnsdef.forEach((c) => {
+            const col = document.createElement(`th`);
+            //col.className = `${c[0]}`;
+            col.innerHTML = `${c[0]}`;
+            row.appendChild(col)
+        })
+
+
+        // tableParts.push(`</colgroup>`)
+        // const tableParts = Array.of(`<tr>`)
+        // this.columnsdef.forEach((c)=>tableParts.push(`<th>${c[0]}</th>`))
+        // tableParts.push(`</tr>`)
+
+        this.element.innerHTML = '';//tableParts.join('')
+        this.element.appendChild(this.colgroup)
+        this.element.appendChild(document.createElement(`thead`))
+        this.element.appendChild(document.createElement(`tbody`))
+
+        this.element.tHead.appendChild(row)
+    }
+
+    toggleColumns() {
+        this.toggleState = ((this.toggleState || 0) + 1) % this.toggleStates.length
+        //console.log(this.toggleState, this.toggleStates[this.toggleState])
+        this.toggleStates[this.toggleState]()
+        //console.log("toggleElement", this.toggleElement)
+        this.toggleElement.innerHTML = this.toggleIndicators[this.toggleState];
+        const b = document.getElementById('regimesbutton')
+        if (this.toggleState == 1 && b.classList.contains('highlight')) b.click()
+    }
+    setVisibleColumns(nameList) {
+        const columnMap = new Map(Array.from(this.colgroup.children).map((c, i) => [c.className, i]))
+        for (var h of nameList) columnMap.delete(h)
+        //console.log([...columnMap.values()])
+        this.hideOnlyColumns([...columnMap.values()])
+    }
+    // https://stackoverflow.com/a/29500414
+
+    // example using flex (table): https://codepen.io/deweechi/pen/GRWNJNb
+    async hideOnlyColumns(columnNumList) {
+        const styleParts = Array()
+        for (var num of columnNumList) {
+            styleParts.push(
+                `#${this.id} tr :is(td,th):nth-child(${num + 1}) {display: none;}`
+                //`#${this.id} tr td:nth-child(${num + 1}), #${this.id} th:nth-child(${num + 1}) {display: none;}`
+                //`#${this.id} col.satnum {visibility: collapse;}`
+            )
+        }
+        //console.log(Object.keys(this.hiddenColumnStyle))
+        this.hiddenColumnStyle.textContent = styleParts.join('');
+    }
+
+
+    generateTable() {
+        // creates a <table> element and a <tbody> element
+        const tbl = document.createElement("table");
+        const tblBody = document.createElement("tbody");
+
+        // creating all cells
+        for (let i = 0; i < 2; i++) {
+            // creates a table row
+            const row = document.createElement("tr");
+
+            for (let j = 0; j < 2; j++) {
+                // Create a <td> element and a text node, make the text
+                // node the contents of the <td>, and put the <td> at
+                // the end of the table row
+                const cell = document.createElement("td");
+                const cellText = document.createTextNode(`cell in row ${i}, column ${j}`);
+                cell.appendChild(cellText);
+                row.appendChild(cell);
+            }
+
+            // add the row to the end of the table body
+            tblBody.appendChild(row);
+        }
+
+        // put the <tbody> in the <table>
+        tbl.appendChild(tblBody);
+        // appends <table> into <body>
+        document.body.appendChild(tbl);
+        // sets the border attribute of tbl to '2'
+        tbl.setAttribute("border", "2");
+    }
+}
+
+// tablehier
+// div#right_list
+//   div.toggles
+//   div#regimes
+//     div#orbitText 
+//     div.orbit-table
+//       table.orbit-table
+
+class panelList {
+    static randomCharSet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    static generateRandomString(length) {
+        let result = Array()//'';
+        for (let i = 0; i < length; i++) {
+            result.push(panelList.randomCharSet.charAt(Math.floor(Math.random() * panelList.randomCharSet.length)));
+        }
+        return result.join('');
+    }
+    constructor(id) { // 'right_nav'
+        this.id = id || panelList.generateRandomString(10)
+
+        var styleText =
+            `#${this.id} {
+                /*
+                width:100%; position:fixed; top:40px;
+                height:100%; position:fixed; right:0px;
+                margin-left: auto;margin-right: 0; 
+                */
+                position:fixed;  left:0px; top: 35px;
+                color: white;
+                text-align:left;
+                z-index:4;
+                pointer-events: none;
+                
+            }
+            
+            #${this.id} > div {
+                position:static;
+                font-family: Arial,sans-serif;
+                font-size:10pt;
+                margin: 0px;
+                pointer-events: auto;
+                left:0px;
+            }
+            #orbitText {text-align:center}
+            div#regimes {align: left;display:inline-block;left:0px;}
+            div#regimes.invisible {display:none;}
+            div.orbit-table {display:inline-block;}
+            /*
+            div#right_list {background-color:yellow !important;}
+            div#regimes {background-color:blue;}
+            div.orbit-table table.orbit-table {background-color:red;}
+            */
+
+            /* #orbitText {white-space: pre-line;padding: 5px !important; margin: 2px !important; background-color:red;}*/
+            table.orbit-table {
+                margin: 5px;
+                align:left;
+                font-size:8pt;
+                border-collapse: collapse;
+                background-color:#0002;
+                text-align:center;
+                table-layout:fixed;
+            }
+            div.orbit-table {display:inline-block;}
+            
+
+            table#right_table tr :is(td,th):first-child {
+                text-align: right;
+            }
+            table#right_table colgroup col:first-child {
+                min-width: 60px;
+                
+            }
+            table#right_table tr {scroll-margin-top: 5rem; }
+            table.orbit-table :is(td,th) {
+                
+                padding: 5px; /* Add padding for cells */
+                
+            }
+            
+                
+
+            table.orbit-table td {
+                background-clip: padding-box; /* this has been added */
+                background-color: #369;
+                color: white;
+                border: 5px solid #0000;
+                border-radius: 10px;
+                margin:3px;
+            }
+            
+            table.orbit-table th {
+                position: relative;
+                top: -11px;
+                text-align: right;
+            }
+            table.orbit-table tr:first-child th {
+                position: relative;
+                left: -19px;
+                top: 3px;
+                text-align: center;
+            }
+            
+            table.orbit-table tr:first-child th:first-child {
+                position: relative;
+                left: 0px;
+                top: 0px;
+                text-align: right;
+            }
+            
+            table.orbit-table td:empty {background-color:#0000;}
+            
+            table.orbit-table td.sporb {
+                border:5px solid wnite;
+                background-color: #a74;
+            }
+            table.orbit-table td.highlight { background-color: green }
+            .sub{vertical-align:sub;font-size:smaller;}
+            .satgroup { right:0px ; text-align:right;
+            margin-top:5px;
+            margin-botton:5px;
+                margin-left: auto;margin-right: 0; 
+                
+            }
+            .toggles {
+                
+                left: 0px;
+                font-family: "Arial Narrow";/*,Arial,sans-serif; */
+                font-stretch: condensed;
+                font-size:9pt;
+                color: white;
+                padding: 8px 4px 6px 4px;
+                /*border: 5px;*/
+            }
+            .toggles span.button {
+                display:inline-block;
+                background-color: rgb(7, 55, 99);
+                color: white;
+                
+                cursor: pointer;
+                padding: 8px 4px 6px 4px;
+                margin: 5px;
+                /*border: 5px;*/
+                text-decoration: none;
+            }
+            .toggles span.highlight {background-color:green; }
+            
+            [role="toolbar"] {
+              display: flex;
+            }
+            
+            [role="toolbar"] > * {
+              border: 1px solid #aaa;
+              background: #ccc;
+            }
+            
+            [role="toolbar"] > [aria-disabled="false"]:focus {
+              background-color: #eee;
+            }
+            
+            button {
+              font-size: inherit;
+            }
+            
+            button[aria-disabled="true"] {
+              opacity: 0.5;
+            }
+            
+            .annotate {
+              color: #366ed4;
+              font-style: italic;
+            }
+            
+            .hidden {
+              display: none;
+            }
+            
+            .offscreen {
+              position: absolute;
+              width: 1px;
+              height: 1px;
+              overflow: hidden;
+              clip: rect(1px 1px 1px 1px);
+              clip: rect(1px, 1px, 1px, 1px);
+              font-size: 14px;
+              white-space: nowrap;
+            }`
+        // margin-left: auto; 
+        // margin-right: 0;
+        this.style = document.createElement("style")
+        this.style.textContent = styleText
+        document.head.appendChild(this.style);
+        //this.displayDefault = this.style.display.slice(0)
+
+        this.element = document.getElementById(this.id)
+        if (!this.element) {
+            this.element = document.createElement(`div`)
+            this.element.id = this.id
+        }
+
+
+        //this.element.class = `listbox-area`
+        this.element.innerHTML = //`Satellites\nin\nOrbit
+            //`<input type="text" id="fname" name="fname"><br>` +
+            `loading satellite data...`
+
+        document.body.appendChild(this.element);
+    }
+    // fn is called with sats iterated, with grouped: [group,[groupmembers]]
+    setSelectionList(iterator, displayfn, valuefn, selectcb) {
+        // U+20D7  combining right arrow
+
+        var testTable = `<div class="orbit-table"><table class="orbit-table" onclick="regimeChange">
+<tr><th>↓h<span class="sub">a</span>&nbsp;h<span class="sub">p</span>⃗</th><th>0</th><th>2000</th><th>31570</th><th>40002</th><td id="all">All</td></tr>
+
+<tr><th>0</th><td>LEO</td><td></td><td></td><td></td><td class="sporb">NSO*</td></tr>
+<tr><th>2000</th><td>LMO</td><td>MEO*</td><td></td><td></td><td class="sporb">IGO</td></tr>
+<tr><th>31750</th><td>GTO*</td><td>MGO</td><td>GEO*</td><td></td><td class="sporb">GEOu</td></tr>
+<tr><th>40002</th><td colspan=2>HEO</td><td>GHO</td><td>HAO</td><td class="sporb">EGO</td></tr>
+
+</table></div>`
+        const html = Array();
+        //html.push(`<input type="text" id="fname" name="fname"/><br>`)
+
+
+        html.push(`<div class="invisible" id="regimes">`)
+        html.push(`<div id="orbitText">Select Regime below to show satellites</div>`)
+        html.push(testTable)
+        html.push(`</div>`); // regimes
+
+        if (false) {
+            html.push(`<div class="satgroup"><select id="satgroup" name="satgroup" onfocus='this.size=3;' onblur='this.size=1;' onchange='this.size=1; this.blur();${selectcb}'>`)
+            //console.log(html[html.length - 1])
+            html.push(`<option value="">Select Orbit</option>`)
+            for (var element of iterator)
+                html.push(`<option value="${valuefn(element)}">${displayfn(element)}</option>`)
+            console.log("option added to select box", html[html.length - 1], element)
+            console.log(html[html.length - 2])
+            html.push(`</select></div>`)
+        }
+        this.element.innerHTML = html.join('')
+        const tDiv = this.createtoggles()
+        this.element.insertBefore(tDiv, this.element.firstChild)
+        //console.log("selections", this.element)
+        this.element.querySelector('table').addEventListener("click", regimeChange, false)
+        document.getElementById('regimesbutton').click()
+
+        document.getElementById('table').click()
+    }
+    createtoggles() {
+        const toggleButtonsDiv = `
+        <span class="button" onclick="toggleTutorial(this)">Help</span><span id="regimesbutton" class="button" onclick="toggleButton(this,'regimes','show')">Regimes</span><span id="show" class="button invisible" onclick="toggleOrbitRegimes(this)">Visual</span><span id="table" class="button" onclick="tableToggle(this)">Table</span><span class="button" onclick="toggleButton(this,'settings')">Settings</span>
+        <span class="invisible" id="settings"><span class="button" onclick="toggleInset(this)">Inset</span><span class="button" onclick="showAllPaths()">Paths</span><span class="button" onclick="axesToggle(this)">Axes</span><span class="button" onclick="markersToggle(this)">Markers</span><span class="button" onclick="subsolarToggle(this)">Sub-Solar</span><span class="button" onclick="toggleScale(this)">Small</span><span class="button" onclick="reset()">Reset</span></span>`
+        const tDiv = document.createElement(`div`)
+        tDiv.classList.add("toggles")
+        tDiv.innerHTML = toggleButtonsDiv
+        return tDiv;
+    }
+    //function () {}
+    setSelectionList_old(sats, displayText = (s) => s.name) {
+        const html = Array();
+        html.push(`<input type="text" id="fname" name="fname"/><br>`)
+        html.push(`<select id="cars" name="cars" onfocus='this.size=3;' onblur='this.size=1;' onchange='this.size=1; this.blur();satOn(s=>s.regimes.includes(this.value))'>`)
+        console.log(html[html.length - 1])
+        sats.forEach(s => html.push(`<option value="${displayText(s)}">${displayText(s)}</option>`))
+        console.log(html[html.length - 2])
+        html.push(`</select>`)
+        this.element.innerHTML = html.join('')
+    }
+    show() { // "block", "inline", or "flex"
+        this.style.display = this.displayDefault;
+    }
+    hide() {
+        this.style.display = "none";
+    }
+
+    timeDisplay(date) {
+        bannerDisplay(date.toISOString())
+    }
+    bannerDisplay(text) {
+        timeDisplayElement.innerHTML = text
+    }
+
+}
+var markers = Array();
+var axes;
+var subsolar;
+
+function tableToggle(button) {
+    const value = button.classList.toggle("highlight");
+    panelRightTable.element.style.display = value ? 'block' : 'none';
+    if (value) makeTable(satPosition.enabledSats, panelRightTable);
+}
+function axesToggle(button) {
+    toggleButton(button)
+    if (axes) {
+        axes.dispose();
+        axes = null;
+        return;
+    }
+    axes = new BABYLON.Debug.AxesViewer(undefined, rEarth / 1000)
+}
+function markersToggle(button) {
+    // mark axes in ecf
+    toggleButton(button)
+    if (markers.length) {
+        markers.forEach((m) => m.dispose())
+        markers.length = 0;
+        return;
+    }
+
+
+    var marker = BABYLON.MeshBuilder.CreateBox("np", { size: 1, faceColors: Array(6).fill(BABYLON.Color3.Black()) });//, scene);
+
+    marker.position.copyFromFloats(rEarth, 0, 0,)//.scaleInPlace(1 / 1000)
+    marker.position = e2w(marker.position)
+    //BABYLON.Vector3.TransformCoordinatesToRef(marker.position,ecfToWorldMatrix,marker.position)
+    markers.push(marker)
+
+    marker = BABYLON.MeshBuilder.CreateBox("np", { size: 1, faceColors: Array(6).fill(BABYLON.Color3.Red()) });//, scene);
+    marker.position.copyFromFloats(0, rEarth, 0)//.scaleInPlace(1 / 1000)
+    marker.position = e2w(marker.position)
+    //BABYLON.Vector3.TransformCoordinatesToRef(marker.position,ecfToWorldMatrix,marker.position)
+    markers.push(marker)
+
+    marker = BABYLON.MeshBuilder.CreateBox("np", { size: 1, faceColors: Array(6).fill(BABYLON.Color3.White()) });//, scene);
+    marker.position.copyFromFloats(0, 0, rEarth)//.scaleInPlace(1 / 1000)
+    marker.position = e2w(marker.position)
+    markers.push(marker)
+
+
+}
+function getCenter(p1, p2, p3) {
+    const v1 = p2.subract(p1);
+    const v2 = p3.subract(p1);
+
+    const v1v1 = v1.dot(v1);
+    const v2v2 = v2.dot(v2);
+    const v1v2 = v1.dot(v2);
+
+    const base = 0.5 / (v1v1 * v2v2 - v1v2 * v1v2);
+    const k1 = base * v2v2 * (v1v1 - v1v2);
+    const k2 = base * v1v1 * (v2v2 - v1v2);
+    const c = p1.add(v1.scale(k1)).add(v2.scale(k2)); // center
+
+    //radius = c.subtract(p1).length();
+    return center//[center,radius];
+}
+// given two points and center, get Q from first to second
+function RotationQuaternionWithCenterToRef(p1, p2, center, result) {
+    BABYLON.Quaternion.FromUnitVectorsToRef(
+        p1.subtract(center).normalizeToNew(),
+        p2.subtract(center).normalizeToNew(), result);
+}
+
+function getPoint(point, center, partialTime, fullTime, fullQ, resultPoint) {
+    const tempQ = new BABYLON.Quaternion()
+    BABYLON.Quaternion.SmoothToRef(BABYLON.Quaternion.Identity(), fullQ, fullTime, partialTime, tempQ)
+    point.rotateByQuaternionAroundPointToRef(tempQ, center, resultPoint)
+}
+// visualize a single satellite
+class satVisualInstances {
+    static pickList = Array()
+    static scene; // scene in which satellites are visible
+    static sphere; // the object from which each satellite visual is derived
+
+    static initVisual(scene) {
+        // initialize satellite visual base object
+        satVisualInstances.sphere = BABYLON.MeshBuilder.CreateSphere("sat", {
+            diameter: .1, segments: 2,
+        }, scene);
+        satVisualInstances.sphere.registerInstancedBuffer("color", 4);
+
+        const smat = new BABYLON.StandardMaterial("sat");
+        smat.emissiveColor = new BABYLON.Color3(0, 0, 1);
+        smat.specularColor = new BABYLON.Color3(0, 0, 0);
+        smat.diffuseColor = BABYLON.Color3.White()
+        satVisualInstances.sphere.material = smat;
+        //satPosition.sphere.scaling.scaleInPlace(.1)
+        satVisualInstances.sphere.setEnabled(false);
+    }
+
+    constructor(satPosition) {
+
+        this.mesh = satVisualInstances.sphere.createInstance("");
+        this.setColor(BABYLON.Color3.Red());
+        this.disable()
+        //instancedBuffers.color = BABYLON.Color3.Green()
+        this.mesh.metadata = satPosition;
+
+    }
+    dispose() { mesh.dispose() }
+    get position() { return this.mesh.position }
+    set position(position) { this.mesh.position = position }
+    positionCopyFrom(p) { this.mesh.position.copyFrom(p) }
+    enable() {
+        this.enabled = true;
+        this.mesh.setEnabled(true)
+        //console.log("enable", this)
+    }
+    disable() {
+        this.enabled = false;
+        this.mesh.setEnabled(false)
+    }
+    static DisableAll() {
+        sats.forEach(s => { this.disable() })
+    }
+    static DeselectAll() {
+        satVisualInstances.pickList.forEach(s => { s.deselect() })
+        satVisualInstances.pickList.length = 0
+    }
+    setColor(color3) {
+        //return
+        this.mesh.instancedBuffers.color = color3
+    }
+    setScale(scale) {
+        this.mesh.scaling.scaleInPlace(scale)
+    }
+    select() {
+        satVisualInstances.DeselectAll()
+        satVisualInstances.pickList.push(this)
+        this.setColor(BABYLON.Color3.Green());
+        this.setScale(5);
+        if (this.mesh.metadata.pathMesh) {
+            this.mesh.metadata.pathMesh.dispose();
+        }
+        this.mesh.metadata.showEciPath();
+    }
+    deselect() {
+        this.setColor(BABYLON.Color3.Red());
+        this.setScale(1 / 5)
+        if (this.mesh.metadata.pathMesh) {
+            this.mesh.metadata.pathMesh.dispose();
+            this.mesh.metadata.pathMesh = null;
+        }
+    }
+
+}
+class satVisualThinInstances {
+    static instances = Array();
+    static pickList = Array();
+    static scene; // scene in which satellites are visible
+    static sphere; // the object from which each satellite visual is derived
+    static buffer = { matrix: null, matrixChanged: false, color: null, colorChanged: false }
+    static FinalMatrix; // convert world to screen
+
+    static UpdateFinalMatrix() {
+        satVisualThinInstances.FinalMatrix = BABYLON.Matrix.GetFinalMatrix(
+            camera.viewport.toGlobal(
+                engine.getRenderWidth(),
+                engine.getRenderHeight(),
+            ),
+            BABYLON.Matrix.Identity(),
+            camera.getViewMatrix(),
+            camera.getProjectionMatrix(),
+            camera.minZ,
+            camera.maxZ,
+        )
+    }
+
+    static initVisual(scene) {
+        // initialize satellite visual base object
+        satVisualThinInstances.sphere = BABYLON.MeshBuilder.CreateSphere("sat", {
+            diameter: .4, segments: 2,
+        }, scene);
+        satVisualThinInstances.sphere.doNotSyncBoundingInfo = true;
+        satVisualThinInstances.sphere.thinInstanceRefreshBoundingInfo(false)
+
+        satVisualThinInstances.sphere.thinInstanceEnablePicking = true;
+        //satVisualThinInstances.sphere.showBoundingBox = true;
+        satVisualThinInstances.sphere.isPickable = true;
+        scene.constantlyUpdateMeshUnderPointer = true;
+
+        //satVisualInstances.sphere.registerInstancedBuffer("color", 4);
+        //console.log("sphere", satVisualThinInstances.sphere)
+        //satVisualThinInstances.sphere.thinInstanceRegisterAttribute("color", 4);
+        const instanceCount = 12000
+
+        const m = new Float32Array(16 * instanceCount);
+        for (var i = 0; i < instanceCount; i++) {
+            const offset = i * 16
+            m[offset + 15] = 1
+            // scale
+            m[offset] = 1
+            m[offset + 5] = 1
+            m[offset + 10] = 1
+        }
+        satVisualThinInstances.buffer.matrix = m
+        satVisualThinInstances.sphere.thinInstanceSetBuffer("matrix", m, 16, false);
+
+        const c = new Float32Array(4 * instanceCount);
+        satVisualThinInstances.buffer.color = c
+        //satVisualThinInstances.sphere.alwaysSelectAsActiveMesh = true;
+
+        for (var offset = 0; offset < 12000; offset += 4)
+            BABYLON.Color3.Red().toColor4().toArray(satVisualThinInstances.buffer.color, offset)
+        //console.log(c)
+        // for (var inum = 0; inum < 12000/4; inum++)
+        //     satVisualThinInstances.sphere.thinInstanceSetAttributeAt("color", inum, [1, 0,1, 0, ]);
+
+        // satVisualThinInstances.sphere.thinInstanceBufferUpdated("color");
+
+        satVisualThinInstances.sphere.thinInstanceSetBuffer("color", c, 4, false);
+        //test.thinInstanceRegisterAttribute("color", 4);
+        console.log("thinInstanceCount", satVisualThinInstances.sphere.thinInstanceCount)
+        satVisualThinInstances.sphere.thinInstanceBufferUpdated("color")
+        satVisualThinInstances.sphere.thinInstanceCount = 0
+        if (true) {
+
+
+            const smat = new BABYLON.StandardMaterial("sat");
+            //smat.emissiveColor = new BABYLON.Color3(0,0,1);
+            //smat.diffuseColor = new BABYLON.Color3(.0,.0,.5)
+            //smat.specularColor = new BABYLON.Color3(0, 0, 0);
+            smat.diffuseColor = BABYLON.Color3.Red()
+            smat.emissiveColor = BABYLON.Color3.Red()
+            satVisualThinInstances.sphere.material = smat;
+        }
+        //satPosition.sphere.scaling.scaleInPlace(.1)
+        satVisualThinInstances.sphere.setEnabled(true);
+    }
+    get worldMatrix() {
+        return BABYLON.Matrix.FromArray(satVisualThinInstances.buffer.matrix, this.instanceNum * 16);
+    }
+    static ViewFrom(camera, sat) {
+        satPosition.scene.onBeforeRenderObservable.add(() => {
+            scene.activeCameras[0].position = sat.visual.position;
+            //scene.activeCameras[1].update();
+            //scene.activeCameras[1].freezeProjectionMatrix(sat.visual.worldMatrix)
+
+
+        })
+    }
+
+
+    constructor(satPosition) {
+        this.instanceNum = -1 //satVisualInstances.sphere.createThinInstance("");
+        this.satobject = satPosition;
+        this.rotation = BABYLON.Quaternion.Identity();
+
+        //this.setColor(BABYLON.Color3.Red());
+        this.disable()
+        //instancedBuffers.color = BABYLON.Color3.Green()
+
+    }
+    //dispose() { mesh.dispose() }
+    static _pauseUpdate = false;
+
+    static Pick(pickInfo) {
+        console.log("pick", pickInfo)
+        return satVisualThinInstances.instances[pickInfo.thinInstanceIndex]
+        return pickInfo?.pickedMesh?.metadata;
+        console.log(pickInfo.pickedPoint, pickInfo.thinInstanceIndex);
+
+    }
+
+    get position() { return this._position }
+    static get pausePositionUpdate() { return satVisualThinInstances._pauseUpdate }
+    static set pausePositionUpdate(pause) {
+        satVisualThinInstances._pauseUpdate = pause;
+        if (!pause) {
+            if (satVisualThinInstances.buffer.matrixChanged) {
+                satVisualThinInstances.buffer.matrixChanged = false;
+                satVisualThinInstances.sphere.thinInstanceBufferUpdated("matrix");
+            }
+            if (satVisualThinInstances.buffer.colorChanged) {
+                satVisualThinInstances.buffer.colorChanged = false;
+                satVisualThinInstances.sphere.thinInstanceBufferUpdated("color");
+            }
+        }
+    }
+    positionCopyFrom(p) {
+        this._position.copyFrom(p)
+
+        // maintain direction
+        if (false) {
+            const matrix = BABYLON.Matrix.Identity()
+            const newDir = p.normalizeToNew();
+            if (this.rotation) {
+                const axis = this._position.cross(p)
+                const angle = BABYLON.Vector3.GetAngleBetweenVectors(this._position, p, axis)
+                RotationAxisToRef(axis, angle, this.quaternion)
+                FromLookDirectionLHToRef(newDir, BABYLON.Axis.Y, this.rotation)
+            }
+        }
+        const offset = this.instanceNum * 16;
+        p.toArray(satVisualThinInstances.buffer.matrix, offset + 12)
+        //satVisualThinInstances.buffer.matrix[offset+15] = 1
+        // scale
+        // satVisualThinInstances.buffer.matrix[offset] = 1
+        // satVisualThinInstances.buffer.matrix[offset+5] = 1
+        // satVisualThinInstances.buffer.matrix[offset+10] = 1
+
+        //const matrix = BABYLON.Matrix.Translation(p.x, p.y, p.z);
+        //satVisualThinInstances.sphere.thinInstanceSetMatrixAt(this.instanceNum, matrix,!satVisualThinInstances._pauseUpdate);
+        if (satVisualThinInstances._pauseUpdate) satVisualThinInstances.buffer.matrixChanged = true;
+    }
+
+    set position(p) {
+
+        this._position = position;
+
+        const matrix = BABYLON.Matrix.Translation(p.x, p.y, p.z);
+        satVisualThinInstances.sphere.thinInstanceSetMatrixAt(this.instanceNum, matrix, !satVisualThinInstances._pauseUpdate);
+        if (satVisualThinInstances._pauseUpdate) satVisualThinInstances.buffer.matrixChanged = true;
+    }
+    enable() {
+        if (this.enabled) return;
+        //console.log("enable1", this)
+        this.enabled = true;
+        this._position = BABYLON.Vector3.Zero()
+        //this.instanceNum = satVisualThinInstances.sphere.thinInstanceAdd(BABYLON.Matrix.Identity());
+        this.instanceNum = satVisualThinInstances.sphere.thinInstanceCount++
+        //satVisualThinInstances.sphere.thinInstanceAdd(BABYLON.Matrix.Identity());
+        satVisualThinInstances.instances.push(this)
+        this.setColor(BABYLON.Color3.Red());
+        //console.log("enable2", this)
+    }
+    disable() {
+        if (!this.enabled) return;
+        this.enabled = false;
+        const end = satVisualThinInstances.instances.pop()
+        if (end.instanceNum < satVisualThinInstances.instances.length) {
+            satVisualThinInstances.instances[this.instanceNum] = end;
+            end.instanceNum = this.instanceNum
+        }
+        //console.log("sphere", satVisualThinInstances.sphere)
+        satVisualThinInstances.sphere.thinInstanceCount--
+        // todo: copy matrix
+    }
+    static DisableAll() {
+        sats.forEach(s => s.visual.disable())
+    }
+    static DeselectAll() {
+        satVisualThinInstances.pickList.forEach(s => { s.deselect() })
+        satVisualThinInstances.pickList.length = 0
+    }
+    static Reset() {
+        satVisualThinInstances.DeselectAll();
+        const color = BABYLON.Color3.Red().toColor4(1)
+        const matrix = BABYLON.Matrix.Identity()
+        for (var i = 0; i < satVisualThinInstances.buffer.color.length; i += 4) {
+            color.toArray(satVisualThinInstances.buffer.color, i)
+        }
+        for (var i = 0; i < satVisualThinInstances.buffer.matrix.length; i += 16) {
+            matrix.toArray(satVisualThinInstances.buffer.matrix, i)
+
+        }
+        satVisualThinInstances.sphere.thinInstanceBufferUpdated("matrix");
+        satVisualThinInstances.sphere.thinInstanceBufferUpdated("color");
+
+
+    }
+    static SetScaleAll(scale) {
+        for (var offset = 0; offset < satVisualThinInstances.buffer.matrix.length; offset += 16) {
+            satVisualThinInstances.buffer.matrix[offset] = scale
+            satVisualThinInstances.buffer.matrix[offset + 5] = scale
+            satVisualThinInstances.buffer.matrix[offset + 10] = scale
+            //matrix.toArray(satVisualThinInstances.buffer.matrix, i)
+
+        }
+    }
+    setColor(color3) {
+        //return
+        color3 = BABYLON.Color3.Green()
+        const offset = this.instanceNum * 4
+        color3.toColor4().toArray(satVisualThinInstances.buffer.color, offset)
+        satVisualThinInstances.sphere.thinInstanceBufferUpdated("color"); // delete
+        return
+        satVisualThinInstances.sphere.thinInstanceSetAttributeAt("color", this.instanceNum, (color3.toColor4() || color).asArray(), true)//!satVisualThinInstances._pauseUpdate);
+        if (satVisualThinInstances._pauseUpdate) satVisualThinInstances.buffer.colorChanged = true;
+    }
+    setScale(scale) {
+        //this.mesh.scaling.scaleInPlace(scale)
+        const offset = this.instanceNum * 16
+        satVisualThinInstances.buffer.matrix[offset] *= scale
+        satVisualThinInstances.buffer.matrix[offset + 5] *= scale
+        satVisualThinInstances.buffer.matrix[offset + 10] *= scale
+    }
+    select() {
+        satVisualThinInstances.DeselectAll()
+        satVisualThinInstances.pickList.push(this)
+        this.setColor(BABYLON.Color3.Green());
+        satVisualThinInstances.sphere.thinInstanceBufferUpdated("color"); // delete
+        this.setScale(5);
+        if (this.satobject.pathMesh) {
+            this.satobject.pathMesh.dispose();
+        }
+        this.satobject.showEciPath();
+    }
+    deselect() {
+        this.setColor(BABYLON.Color3.Red());
+        this.setScale(1 / 5)
+        if (this.satobject.pathMesh) {
+            this.satobject.pathMesh.dispose();
+            this.satobject.pathMesh = null;
+        }
+    }
+
+}
+
+// for each sat, keep: p1, p2, p3, t1, t2, t3, center, fullQ
+class satPosition {
+    //static GM = 398600.4418; // km^3/s^2 
+    //static GM = 398600.4415; // km^3/s^2 from EGM-96
+    static GM = 398600.8; // km^3/s^2 from WGS72
+    //static periodFactor = satPosition.GM/(2*24*60*60*Math.PI * 2*24*60*60*Math.PI) // semi-major axis = Math.cbrt(pF*No*No)
+
+    // derived independently, but also found in eq 6 in
+    // https://celestrak.org/publications/AIAA/2008-6770/AIAA-2008-6770.pdf
+
+    static periodFactor = satPosition.GM * 60 * 60 // semi-major axis = Math.cbrt(pF*No*No)
+    //static periodFactor ;//= satellite.mu * satellite.minutesPerDay // semi-major axis = Math.cbrt(pF*No*No)
+
+    static sphere;
+
+    static visualClass = satVisualThinInstances//satVisualInstances
+    static pathMaster;
+    static _pathMasterPause;
+    static apses;
+    static _SatLine = {};
+
+    static UpdateLine(sat) {
+        if (sat) satPosition._SatLine.sat = sat;
+        else sat = satPosition._SatLine.sat;
+        if (!sat) return;
+        if (!satPosition._SatLine.mesh) {
+            satPosition._SatLine.points = [BABYLON.Vector3.Zero(), BABYLON.Vector3.Zero()]
+            satPosition._SatLine.mesh = BABYLON.MeshBuilder.CreateLines("sat line", { points: satPosition._SatLine.points, updatable: true }, satPosition.scene);
+            //console.log("matrix",sat.circleXYToPathMatrix,satPosition.eAnom_rad(sat.mo, sat.ecco),sat.satrec.mo,sat.satrec.ecco)
+        }
+        //console.log(sat.satrec.mo)
+        const meanAnom = sat.satrec.mo + (sat.satrec.mdot * sat.satrec.t);
+        const E = satPosition.eAnom_rad(meanAnom, sat.satrec.ecco)//,err);
+        BABYLON.Vector3.TransformCoordinatesFromFloatsToRef(Math.cos(E), Math.sin(E), 0,
+            sat.circleXYToPathMatrix,
+            satPosition._SatLine.points[0]
+        )
+        //console.log("line",satPosition._SatLine.points[0])
+        BABYLON.MeshBuilder.CreateLines("sat line", { points: satPosition._SatLine.points, instance: satPosition._SatLine.mesh, updatable: true }, satPosition.scene);
+    }
+    static eAnom_rad(mAnomRad, e, err = 1e-16, maxiterations = 200) {
+        if (false) {
+        // from https://phys.libretexts.org/Bookshelves/Astronomy__Cosmology/Celestial_Mechanics_(Tatum)/09%3A_The_Two_Body_Problem_in_Two_Dimensions/9.05%3A_Position_in_an_Elliptic_Orbit
+        // eq 9.6.8
+
+        // starting guess
+        var eAnom = (e < 0.98) ? mAnomRad : Math.PI;
+        //eAnom = Math.PI;
+        var prev_eAnom;
+        var cosE;
+        var i = 0;
+        do {
+            prev_eAnom = eAnom;
+            cosE = Math.cos(eAnom)
+            eAnom = (mAnomRad - e * (eAnom * cosE - Math.sin(eAnom))) / (1 - e * cosE); // from 9.6.8 
+            //meanE = atan2( Math.sqrt(1-e*e)*Math.sin )
+        } while (Math.abs(eAnom - prev_eAnom) > err && i++ < maxiterations)
+        
+        
+        return eAnom;
+    }
+        // from https://space.stackexchange.com/a/8915
+        //var eAnom = mAnomRad; // was original
+        var i = 0;
+        var eAnom = (e < 0.98) ? mAnomRad : Math.PI;
+        do {
+            var dE = (eAnom - e * Math.sin(eAnom) - mAnomRad)/(1 - e * Math.cos(eAnom));
+            eAnom -= dE;
+        } while (Math.abs(dE) > 1e-6 && i++ < maxiterations)
+        return eAnom;
+    }
+    static CalcTrueAnomaly2d(e, E) {
+        // eq 2.3.17c
+        return 2 * Math.atan((Math.sqrt((1 + e) / (1 - e)) * Math.tan(E / 2)))
+    }
+    removeLabel() {
+        this.labelHTML?.remove()
+        this.labelHTML = null;
+        this.label?.dispose()
+        this.label = null;
+    }
+    addLabelHTML(text) {
+
+        text = text || this.name
+        this.labelHTML?.remove();
+        const label = document.createElement("span");
+
+
+        label.textContent = text
+        label.className = 'satlabel'
+
+        this.labelHTML = label
+        this.labelHTML.style.top = "500px";
+        this.labelHTML.style.left = "400px";
+        //const canvas = engine.getRenderingCanvas();
+        document.body.appendChild(label);
+        const cStyle = this.labelHTML.getBoundingClientRect()
+        this.labelHTMLOffset = new BABYLON.Vector3(-cStyle.width / 2, -cStyle.height / 2, 0);
+
+    }
+    addLabel(text) {
+        this.addLabelHTML(text)
+        return
+        text = text || this.name
+        //console.log("add label")
+        if (this.label) this.label.dispose()
+        const label = new BABYLON.GUI.TextBlock(text, text);
+        //label.layerMask = 0x00000002
+        label.fontFamily = 'Arial' //Tahoma';//'"Fira Sans", sans-serif'
+        label.fontSize = "9px";
+        //label.fontSizeInPixels = "";
+        label.fontStyle = '';
+        label.fontWeight = "";
+
+        //label.fontStyle = '6pt "Fira Sans", sans-serif;'
+        label.color = "white"
+        label.leftInPixels = 50;
+        label.topInPixels = 50;
+        gui.addControl(label)
+        this.label = label;
+        //console.log("added label",label)
+    }
+    getTrueAnomaly2d(err) {
+        const E = satPosition.eAnom_rad(this.mo, this.ecco, err);
+        return satPosition.CalcTrueAnomaly2d(this.ecco, E);
+    }
+    static get pathMasterPause() { return satPosition._pathMasterPause; }
+    static set pathMasterPause(pause) {
+        satPosition._pathMasterPause = pause;
+        if (!pause && satPosition.pathMaster?.thinInstanceCount !== undefined) {
+            //console.log("updating buffers", satPosition.pathMaster?.thinInstanceCount,satPosition.apses?.thinInstanceCount)
+            satPosition.pathMaster?.thinInstanceBufferUpdated("matrix")
+            satPosition.apses?.thinInstanceBufferUpdated("matrix")
+            satPosition.pathMaster?.thinInstanceBufferUpdated("color")
+            satPosition.apses?.thinInstanceBufferUpdated("color")
+            //console.log("buffer updated?",satPosition.pathMaster?.thinInstanceCount,satPosition.apses?.thinInstanceCount)
+        }
+
+    }
+    static PathClearAll() {
+        if (satPosition.pathMaster) satPosition.pathMaster.thinInstanceCount = 0;
+        if (satPosition.apses) satPosition.apses.thinInstanceCount = 0;
+    }
+
+
+    static eciWorldMatrix = BABYLON.Matrix.Compose(
+        new BABYLON.Vector3(-1 / 1000, -1 / 1000, -1 / 1000),
+        new BABYLON.Quaternion.RotationYawPitchRoll(0, Math.PI / 2, Math.PI),
+        BABYLON.Vector3.Zero()
+    )
+    static scene;
+    static enabledSats = Array();
+    static selectedSats = Array();
+    get name() { return this.dataMap.get('OBJECT_NAME') }
+
+
+    // BABYLON.Vector3.TransformCoordinates(v1,satPosition.eciWorldMatrix)
+    // satPosition.eciWorldMatrix.decomposeToTransformNode(mesh) // if mesh has no current transformations
+    // parentNode = mesh.setPreTransformMatrix(satPosition.eciWorldMatrix)
+
+    static initializeClass(scene) {
+        //satPosition.periodFactor = satellite.mu * satellite.minutesPerDay // semi-major axis = Math.cbrt(pF*No*No)
+        satPosition.periodFactor = 398600.8 * 60 * 60 // semi-major axis = Math.cbrt(pF*No*No)
+        console.log(`mu set ${satPosition.periodFactor}`)
+
+        satPosition.scene = scene;
+        satPosition.visualClass.initVisual(scene);
+
+        // for labels
+        var styleSheet = document.createElement("style")
+        styleSheet.textContent = `span.satlabel{
+            position: fixed;
+            color:white;
+            font: 7px Arial;
+            top:500px;
+            left:500px;
+            text-align:center;
+            white-space:nowrap;
+            border:1px solid white;
+        }`
+        document.head.appendChild(styleSheet);
+    }
+    constructor(satrec, dataMap) {
+        this.dataMap = dataMap;
+        this.satrec = satrec;
+        this.visual = new satPosition.visualClass(this);
+        this.p1 = this.p2 = this.p3 = null;
+    }
+
+    // visTime,satmeshes[i].position
+    update(visTime) {
+        if (!this.visual.enabled) return
+        const gmst = satellite.gstime(visTime);
+        const eci = satellite.propagate(this.satrec, visTime);
+        if (!eci || !eci.position) {
+            this.visual.disable();
+            return;
+        }
+        //console.log("eci",this.name,eci)
+        var temp = this.p1
+        this.p1 = this.p2;
+        this.p2 = this.p3;
+        this.p3 = temp;
+        if (!this.p3) {
+            this.p3 = new BABYLON.Vector3()
+            //this.t3 = new Date();
+        }
+
+        temp = this.t1
+        this.t1 = this.t2
+        this.t2 = this.t3
+        this.t3 = temp
+        //console.log(eci)
+        this.p3.copyFromFloats(eci.position.x, eci.position.y, eci.position.z)
+        this.t3 = visTime.getTime()
+        const showTrace = false;
+        if (showTrace && this.p1 && this.p2) {
+            //if (this.path) this.path.dispose()
+            // circum of earth (40000km) should get 64 segments.
+            // seg = Math.max(1,~~(length/40000)
+            var segments = BABYLON.Vector3.Distance(this.p2, this.p1) + BABYLON.Vector3.Distance(this.p2, this.p3)
+            //segments = Math.max(1, segments / 40000)
+            segments = 32
+            const points = BABYLON.Curve3.ArcThru3Points(this.p1.clone(), this.p2.clone(), this.p3.clone(), segments, false, false).getPoints()
+            points.forEach((p, i, a) => {
+                var time = new Date().setTime(this.t1 + (this.t3 - this.t1) * i / 64)
+                //this.updateEciInPlace(p,time,a[i])
+                //var ecf = satellite.eciToEcf(p, satellite.gstime(time));
+                //const w=eci.position
+                //a[i].copyFrom(e2w(new BABYLON.Vector3(-w.x,w.y,w.z).scale(1/1000)))
+                a[i].copyFrom(e2w(p))
+                //return ecf
+            })
+            //console.log(points)
+
+            //console.log(this.p1,this.p2,this.p3)
+            //console.log(e2w(this.p1),e2w(this.p2),e2w(this.p3))
+            //if(updateCount==6) bannerDisplay(`[${this.p1.asArray()}],[${this.p2.asArray()}],[${this.p3.asArray()}]`)
+
+            this.path = BABYLON.MeshBuilder.CreateLines("sat path", { points: points, }, scene)
+
+        }
+
+        //this.p3this.p3.copyFromFloats()
+        //this.updateMeshEcfFromEci(eci.position,gmst);
+        if (this.visual.position) {
+            const temp = BABYLON.Vector3.Zero()
+            this.updateEciInPlace(eci.position, gmst, temp)
+            this.visual.positionCopyFrom(temp);
+            if (this.label) {
+                //console.log(this.label)
+                //console.log(scene.getTransformMatrix(),this.label._host._getGlobalViewport(),temp)
+
+                this.label.moveToVector3(temp, scene)
+
+            }
+        }
+        //console.log()
+    }
+
+    init(visTime, increment) { }
+
+    updateMeshEcfFromEci(eciPosition, gmst) {
+        if (!this.visual.enabled) return;
+        const temp = BABYLON.Vector3.Zero()
+        this.updateEcfFromEciInPlace(eciPosition, gmst, temp)
+        this.visual.positionCopyFrom(temp);
+    }
+    updateEcfFromEciInPlace(eciPosition, gmst, result) {
+        const vecTemp = new BABYLON.Vector3();
+        //if (! eciPosition) return;
+        //eciPosition = new BABYLON.Vector3(-eciPosition.x,eciPosition.y,eciPosition.z).scaleInPlace(1 / 1000)
+        //BABYLON.Vector3.TransformCoordinatesToRef(eciPosition, BABYLON.Matrix.RotationYawPitchRoll(0,Math.PI/2, Math.PI),eciPosition)
+        if (false) {
+            const ecfPosition = satellite.eciToEcf(eciPosition, gmst);
+            //if (!ecfPosition) return;
+
+            vecTemp.copyFromFloats(ecfPosition.x, ecfPosition.y, ecfPosition.z)//.scaleInPlace(1 / 1000)
+            var w = e2w(vecTemp)
+        } else {
+            w = e2w(vecTemp.copyFromFloats(eciPosition.x, eciPosition.y, eciPosition.z))//.scaleInPlace(1 / 1000))
+        }
+        //w.copyFromFloats(ecfPosition.x, ecfPosition.y, ecfPosition.z)
+        //console.log("coord",w)
+        result.copyFrom(w)
+        return result;
+    }
+    updateEciInPlace(eciPosition, gmst, result) {
+        if (!result) return;
+        const vecTemp = new BABYLON.Vector3();
+        //if (! eciPosition) return;
+        //eciPosition = new BABYLON.Vector3(-eciPosition.x,eciPosition.y,eciPosition.z).scaleInPlace(1 / 1000)
+        //BABYLON.Vector3.TransformCoordinatesToRef(eciPosition, BABYLON.Matrix.RotationYawPitchRoll(0,Math.PI/2, Math.PI),eciPosition)
+        if (false) {
+            const ecfPosition = satellite.eciToEcf(eciPosition, gmst);
+            //if (!ecfPosition) return;
+
+            vecTemp.copyFromFloats(ecfPosition.x, ecfPosition.y, ecfPosition.z)//.scaleInPlace(1 / 1000)
+            var w = e2w(vecTemp)
+        } else {
+            w = e2w(vecTemp.copyFromFloats(eciPosition.x, eciPosition.y, eciPosition.z))
+        }
+        //w.copyFromFloats(ecfPosition.x, ecfPosition.y, ecfPosition.z)
+        //console.log("coord",w)
+        result.copyFrom(w)
+    }
+    updateRegime(hp, ha, i, e, a) {
+        // first get overall orbit regime
+        const hcat = (h) => { var i; for (i = 0; h > [2000, 31570, 40002, Infinity][i]; i++); return i }
+        //console.log("h",hcat(ha),ha,hcat(hp),hp)
+        const regimedef = [['LEO'], ['LMO', 'MEO'], ['GTO', 'MGO', 'GEO'], ['HEO', 'HEO', 'GHO', 'HAO']]
+        var regime = regimedef[hcat(ha)][hcat(hp)]
+
+        // NSO is a strict subset of MEO.
+        //GTO, GEO, NSO have additional inclination limits
+        //GEO, NSO h range is narrower 
+        //EGO, IGO have semi-major axis and e range, difference is inclination
+        // meaning of suffixes: n = negative inclination; i = higher than regime's inclination; x = outside regime's h range
+        // p = protected range
+
+        // modify regime based on inclination and/or h range limits
+        switch (regime) {
+            case 'GTO':
+                const igcat = (a) => { var x; for (x = 0; a > [0, 90, Infinity][x]; x++); return x }
+                regime = ['GTOn', 'GTO', 'GTOi'][igcat(i)]
+                break;
+            case 'GEO':
+                const gcat = (h) => { var x; for (x = 0; h > [35586, 35986, Infinity][x]; x++) { } return x }
+                const icat = (i) => { var x; for (x = 0; i > [-15, 15, 25, Infinity][x]; x++) { } return x }
+                regime = null;//'GEOx'
+                if (gcat(hp) == 1 && gcat(ha) == 1) regime = ['GEOn', 'GEO', 'GEOu', null][icat(i)]
+                //console.log(this.name,regime,i)
+                break;
+            case 'MEO':
+                const ncat = (h) => { var i; for (i = 0; h > [18100, 24300, Infinity][i]; i++); return i }
+                const nicat = (h) => { var i; for (i = 0; h > [50, 70, Infinity][i]; i++); return i }
+                if (ncat(hp) == 1 && ncat(ha) == 1 && nicat(i) == 1) regime = 'NSO'
+                break;
+        }
+        const tags = Array()
+        if (regime) tags.push(regime)
+        const gocat = (a) => { for (var x = 0; a > [37948, 46380, Infinity][x]; x++); return x }
+        const gicat = (a) => { for (var x = 0; a > [-25, 0, 25, Infinity][x]; x++); return x }
+        if (!['GEO', 'GEOu'].includes(regime))
+            if (e < 0.25 && gocat(a) == 1) tags.push(['IGOn', 'EGOn', 'EGO', 'IGO'][gicat(i)])
+        if (tags.length == 0) tags.push('UFO')
+
+        if (tags.length > 1) console.log("multiple regime tags:", tags.join(', '))
+
+        const polcat = (a) => { for (var x = 0; a > [200, 1000, Infinity][x]; x++); return x }
+        const policat = (i) => { for (var x = 0; i > [80, 100, Infinity][x]; x++); return x }
+
+        if ((polcat(ha) == 1) && (polcat(ha) == 1) && policat(i) == 1)
+            tags.push("POLAR")
+
+        const ssocat = (a) => { for (var x = 0; a > [600, 800, Infinity][x]; x++); return x }
+        const ssoicat = (i) => { for (var x = 0; i > [97.3, 98.1, Infinity][x]; x++); return x }
+
+        if ((ssocat(ha) == 1) && (ssocat(ha) == 1) && ssoicat(i) == 1)
+            tags.push("SSO")
+        this.regimes = tags;
+
+    }
+
+    distanceToKeplerian() { }// https://stackoverflow.com/a/36401761
+
+    // link for estimating planetary: https://space.stackexchange.com/a/31431
+
+    updateKeplerian() {
+        // for reference, this page note T https://blog.hardinglabs.com/tle-to-kep.html
+        // T^2Tis period, while no is frequency on bottom 
+        // This page relates time , mean anomoly, true anomoly, eccentric anomoly:
+        // https://www.csun.edu/~hcmth017/master/node14.html
+
+        // a is semi-major axis, also mean radius
+        this.a = Math.cbrt(satPosition.periodFactor / (this.satrec.no * this.satrec.no))
+        //this.a = Math.cbrt(satPosition.periodFactor * (this.satrec.no * this.satrec.no))
+        const hx = this.a * this.satrec.ecco;
+        this.ha = this.a + hx - rEarth
+        this.hp = this.a - hx - rEarth
+        this.updateRegime(this.hp, this.ha, this.satrec.inclo * 180 / Math.PI, this.satrec.ecco, this.a)
+        // r is semi-major axis;
+        // hx = r*this.satrec.ecco
+        // ha = r+hx - earthradius
+        // hp = r-hx - earthradius
+
+
+    }
+    hideMesh() {
+        this.visual.disable();
+        const index = satPosition.enabledSats.indexOf(this);
+        if (index < 0) return;
+        satPosition.enabledSatsTableDirty = true;
+
+        const end = satPosition.enabledSats.pop()
+        if (index < satPosition.enabledSats.length)
+            satPosition.enabledSats[index] = end
+    }
+    showMesh(color) {
+        //console.log("show", this)
+
+        if (this.visual.enabled) return;
+        //console.log("show2", this)
+        this.visual.enable();
+        this.visual.setColor(color || BABYLON.Color3.Red())
+        satPosition.enabledSats.push(this)
+        satPosition.enabledSatsTableDirty = true;
+    }
+    showEciPath(withoutApses) {
+
+        // const disc = BABYLON.MeshBuilder.CreateDisc("disc", {radius:1,tessellation:64,}, scene);
+        const circlePoints = BABYLON.Curve3.ArcThru3Points(new BABYLON.Vector3(1, 0, 0), new BABYLON.Vector3(0, 1, 0), new BABYLON.Vector3(-1, 0, 0), 64, false, true).getPoints()
+        // console.log("satrec", this.satrec)
+        // console.log("circlePoints", circlePoints)
+        if (this.pathMesh) this.pathMesh.dispose()
+        //if (this.pathMesh)
+        //this.pathMesh = BABYLON.MeshBuilder.CreateLines("satPath Ellipse",{points:circlePoints,instance:this.pathMesh},satPosition.scene)
+        //else
+        this.pathMesh = BABYLON.MeshBuilder.CreateLines("satPath Ellipse", { points: circlePoints, updatable: true }, satPosition.scene)
+
+
+
+        this.pathMesh.color = new BABYLON.Color3(191 / 255, 64 / 255, 191 / 255); // bright purple
+        this.pathMesh.scaling.y = Math.sqrt(1 - this.satrec.ecco * this.satrec.ecco)
+        //console.log("Y scale", this.pathMesh.scaling.y)
+        this.updateKeplerian()
+
+        const r = this.a;//Math.cbrt(satPosition.periodFactor/(this.satrec.no*this.satrec.no))
+
+        //console.log("radius", r, "eccentricity", this.satrec.ecco, "mean motion", this.satrec.no)
+        this.pathMesh.scaling.scaleInPlace(r);
+        //console.log("scaling", this.pathMesh.scaling)
+
+        // three world rotations;
+        //rotateAround(point,axis,amount) // (world)
+        //for (var c of this.pathMesh.getChildren()) c.bakeCurrentTransformIntoVertices()
+        this.pathMesh.bakeCurrentTransformIntoVertices(true);
+        if (!withoutApses) {
+            var apsis = BABYLON.MeshBuilder.CreateSphere("peri", {
+                diameter: .8 * 1000, segments: 4,
+            }, satPosition.scene);
+            apsis.position.copyFromFloats(r, 0, 0);
+            var mat = new BABYLON.StandardMaterial("peri");
+            mat.diffuseColor = BABYLON.Color3.Purple();
+            mat.emissiveColor = mat.diffuseColor
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+            apsis.material = mat;
+            apsis.parent = this.pathMesh;
+
+            apsis = BABYLON.MeshBuilder.CreateSphere("apo", {
+                diameter: .8 * 1000, segments: 4,
+            }, satPosition.scene);
+            apsis.position.copyFromFloats(-r, 0, 0);
+            var mat = new BABYLON.StandardMaterial("apo");
+            mat.diffuseColor = new BABYLON.Color3(1, .749, 0); // amber
+            mat.emissiveColor = mat.diffuseColor
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+            apsis.material = mat;
+            apsis.parent = this.pathMesh;
+        }
+        this.pathMesh.position.x -= r * this.satrec.ecco;
+        //console.log("X", this.pathMesh.position.x)
+
+        for (var c of this.pathMesh.getChildren()) c.bakeCurrentTransformIntoVertices()
+        this.pathMesh.bakeCurrentTransformIntoVertices(false);
+        //this.pathMesh.rotateAround(this.pathMesh.position,BABYLON.Axis.Z,this.satrec.nodeo) // (world)
+        //this.pathMesh.rotateAround(this.pathMesh.position,BABYLON.Axis.X,this.satrec.inclo) // (world)
+        //this.pathMesh.rotateAround(this.pathMesh.position,BABYLON.Axis.Z,this.satrec.argpo) // (world)
+        //console.log(this.satrec.nodeo * 180 / Math.PI, this.satrec.inclo * 180 / Math.PI, this.satrec.argpo * 180 / Math.PI)
+        this.pathMesh.rotationQuaternion = BABYLON.Quaternion.RotationAlphaBetaGamma(-this.satrec.nodeo, -this.satrec.inclo, -this.satrec.argpo).conjugateInPlace();
+        //const t = 7; // close:7; aligned: 6,5; -incl :4,3,2
+        //this.pathMesh.rotationQuaternion = BABYLON.Quaternion.RotationAlphaBetaGamma(this.satrec.nodeo*((4&t)?-1:1), this.satrec.inclo*((2&t)?-1:1), this.satrec.argpo*((1&t)?-1:1)).conjugateInPlace();
+        //this.pathMesh.rotationQuaternion = BABYLON.Quaternion.RotationAlphaBetaGamma(0,20*Math.PI/180, 20*Math.PI/180,);
+
+        for (var c of this.pathMesh.getChildren()) c.bakeCurrentTransformIntoVertices()
+        this.pathMesh.bakeCurrentTransformIntoVertices(false);
+        satPosition.eciWorldMatrix.decomposeToTransformNode(this.pathMesh)
+        // convert ECI to worldCoordinates
+
+    }
+    getEciPathMatrix() { // UNFINISHED UNTESTED
+        this.updateKeplerian()
+
+        // inputs are: a, ecco, inclo, nodeo, argpo
+        // inputs are: semiMajor, eccentricity, inclination, raan, argPeri
+        // this.a, this.satrec.ecco, this.satrec.inclo, this.satrec.nodeo, this.satrec.argpo
+
+        // Starting with circle at 0,0 in X-Y plane, radius 1
+        // we apply, separately, non-uniform scale, then translate, then three-axis rotation 
+        // then, finally, convert to world coordinates (which is a non-uniform scale/mirror and rotation)
+
+        const r = this.a;
+        // squish in direction of semi-minor axis
+        if (isMesh) {
+            this.pathMesh.scaling.y = Math.sqrt(1 - this.satrec.ecco * this.satrec.ecco)
+
+            // enlarge so 1 converts to semi major axis
+            this.pathMesh.scaling.scaleInPlace(r);
+        } else { // is this equivalent for a point? (aka per point)
+            position.y *= Math.sqrt(1 - this.satrec.ecco * this.satrec.ecco);
+            position.scaleInPlace(r) // maybe? position.multiplyInPlace(r)
+        }
+        this.pathMesh.bakeCurrentTransformIntoVertices(true);
+
+        // move so focus is at 0,0 (X-Y plane)
+        this.pathMesh.position.x -= r * this.satrec.ecco;
+        this.pathMesh.bakeCurrentTransformIntoVertices(false);
+
+        // orient in 3d space
+        // ABG is, in order, YXZ
+        this.pathMesh.rotationQuaternion = BABYLON.Quaternion.RotationAlphaBetaGamma(-this.satrec.nodeo, -this.satrec.inclo, -this.satrec.argpo).conjugateInPlace();
+        this.pathMesh.bakeCurrentTransformIntoVertices(false);
+
+        // translate ECI into babylon world coordinates
+        satPosition.eciWorldMatrix.decomposeToTransformNode(this.pathMesh)
+
+    }
+    get circleXYToPathMatrix() {
+        if (this._circleXYToPathMatrix) return this._circleXYToPathMatrix;
+        const r = this.a;
+
+        // const eciWorld = BABYLON.Matrix.Compose(
+        // new BABYLON.Vector3(1 / 1000, 1 / 1000, 1 / 1000),
+        // new BABYLON.Quaternion.Identity(),//RotationYawPitchRoll(0, Math.PI / 2, Math.PI),
+        // BABYLON.Vector3.Zero())
+
+        const matrix = BABYLON.Matrix.Identity()
+        //const matrix = BABYLON.Matrix.Scaling(1/1000,1/1000,1/1000) // satPosition.eciWorldMatrix.clone()
+        //console.log(matrix,satPosition.eciWorldMatrix)
+        var rot = BABYLON.Quaternion.RotationAlphaBetaGamma(-this.satrec.nodeo, -this.satrec.inclo, -this.satrec.argpo).conjugateInPlace().toRotationMatrix(new BABYLON.Matrix())
+
+
+        matrix.multiplyToRef(BABYLON.Matrix.Scaling(r, r * Math.sqrt(1 - this.satrec.ecco * this.satrec.ecco), r), matrix)
+        matrix.multiplyToRef(BABYLON.Matrix.Translation(-r * this.satrec.ecco, 0, 0), matrix)
+        matrix.multiplyToRef(rot, matrix)
+        matrix.multiplyToRef(satPosition.eciWorldMatrix, matrix)
+        this._circleXYToPathMatrix = matrix;
+        return this._circleXYToPathMatrix;
+
+    }
+    eciPathMatrixForCircleR1() {
+        //this.updateKeplerian()
+        if (!satPosition.pathMaster) {
+            const circlePoints = BABYLON.Curve3.ArcThru3Points(new BABYLON.Vector3(1, 0, 0), new BABYLON.Vector3(0, 1, 0), new BABYLON.Vector3(-1, 0, 0), 256, false, true).getPoints()
+            const color = BABYLON.Color3.Green().toColor4(0)
+            const options = {
+                points: circlePoints,
+                updatable: true,
+                //useVertexAlpha: true,
+                //colors:Array(circlePoints.length).fill(color)
+
+            }
+
+            satPosition.pathMaster = BABYLON.MeshBuilder.CreateLines("satPath master", options, satPosition.scene)
+
+            //this.pathMesh.color = new BABYLON.Color3(191/255, 64/255, 191/255); // bright purple
+            //satPosition.pathMaster.color = BABYLON.Color3.Green()// (191/255, 64/255, 191/255); // bright purple
+            //console.log(satPosition.pathMaster)
+            //satPosition.pathMaster.material.alpha = .3
+            //satPosition.pathMaster.material.alphaMode = BABYLON.Engine.ALPHA_COMBINE;
+            //satPosition.pathMaster.visibility = 0.1 ;
+            var c4 = new BABYLON.Color4(0, 1, 0, .1); // 0.05 minimum
+            var buffer = new Float32Array(16 * 12000);
+            for (var i = 0; i < buffer.length; i += 16) BABYLON.Matrix.IdentityReadOnly.toArray(buffer, i)
+            var colorBuffer = new Float32Array(4 * 12000);
+            for (var i = 0; i < colorBuffer.length; i += 4) c4.toArray(colorBuffer, i)
+            satPosition.pathMaster.thinInstanceSetBuffer("matrix", buffer, 16, false); // not static
+            satPosition.pathMaster.thinInstanceSetBuffer("color", colorBuffer, 4, false); // not static
+            satPosition.pathMasterBuffer = { matrix: buffer, color: colorBuffer };
+            satPosition.pathMaster.thinInstanceCount = 0;
+            satPosition.pathMaster.visibility = .999999
+
+            satPosition.apses = BABYLON.MeshBuilder.CreateSphere("apses", { diameter: .3, segments: 4 }, satPosition.scene);
+
+            var mat = new BABYLON.StandardMaterial("apses");
+            mat.diffuseColor = BABYLON.Color3.White();
+            mat.emissiveColor = mat.diffuseColor
+            mat.specularColor = new BABYLON.Color3(0, 0, 0);
+            satPosition.apses.material = mat;
+
+            c4 = BABYLON.Color3.Purple().toColor4(1);//new BABYLON.Color4(0,1,0,.05);
+            var c5 = new BABYLON.Color4(1, .749, 0, 1); // amber
+
+            buffer = new Float32Array(2 * 16 * 12000);
+            for (var i = 0; i < buffer.length; i += 16) BABYLON.Matrix.IdentityReadOnly.toArray(buffer, i)
+            colorBuffer = new Float32Array(2 * 4 * 12000);
+            for (var i = 0; i < colorBuffer.length; i += 8) { c4.toArray(colorBuffer, i); c5.toArray(colorBuffer, i + 4); }
+            satPosition.apses.thinInstanceSetBuffer("matrix", buffer, 16, false); // not static
+            satPosition.apses.thinInstanceSetBuffer("color", colorBuffer, 4, false); // not static
+            satPosition.apsesBuffer = { matrix: buffer, color: colorBuffer };
+            satPosition.apses.thinInstanceCount = 0;
+            satPosition.apses.visibility = .999999
+
+            //mat.diffuseColor = new BABYLON.Color3(1, .749, 0); // amber
+
+        }
+        // SAME?? This the thinInstance matrix of a circle mesh of radius 1.
+        // the equivalent for spheres on the circle/ellipse is different (in the scaling)
+
+        const matrix = this.circleXYToPathMatrix;
+
+        // .multiplyInPlace( // NO?!
+        //     BABYLON.Matrix.Scaling(1,1/Math.sqrt(1 - this.satrec.ecco * this.satrec.ecco),1)
+        // )
+        //matrix.multiplyInPlace(satPosition.eciWorldMatrix)
+
+        const peri = new BABYLON.Vector3(1, 0, 0);
+        const apo = new BABYLON.Vector3(-1, 0, 0);
+        //console.log("apoapsis",BABYLON.Vector3.TransformCoordinates(apo,matrix))
+        //console.log("periapsis",BABYLON.Vector3.TransformCoordinates(peri,matrix))
+        //console.log("apses",BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(apo,matrix).asArray()))
+        const refresh = !satPosition.pathMasterPause;
+        // satPosition.pathMaster.thinInstanceCount = 1+ satPosition.pathMaster?.thinInstanceCount||0
+        // satPosition.apses.thinInstanceCount = 1+satPosition.apses?.thinInstanceCount||0
+
+        // satPosition.pathMaster.thinInstanceSetMatrixAt(16*satPosition.pathMaster.thinInstanceCount-1,matrix,refresh)
+        // satPosition.pathMaster.thinInstanceSetMatrixAt(16*satPosition.apses.thinInstanceCount-1, BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(apo,matrix).asArray()),refresh)
+        // satPosition.pathMaster.thinInstanceSetMatrixAt(16*satPosition.apses.thinInstanceCount++, BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(peri,matrix).asArray()),refresh)
+
+        //console.log(satPosition.pathMaster.thinInstanceCount,satPosition.apses.thinInstanceCount)
+
+        matrix.toArray(satPosition.pathMasterBuffer.matrix, 16 * satPosition.pathMaster.thinInstanceCount++);
+        BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(apo, matrix).asArray()).toArray(satPosition.apsesBuffer.matrix, 16 * satPosition.apses.thinInstanceCount++);
+        BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(peri, matrix).asArray()).toArray(satPosition.apsesBuffer.matrix, 16 * satPosition.apses.thinInstanceCount++);
+
+        // console.log(satPosition.pathMaster.thinInstanceCount,satPosition.apses.thinInstanceCount)
+
+        // satPosition.pathMaster.thinInstanceAdd(matrix,!satPosition._pathMasterPause);
+        // satPosition.apses.thinInstanceAdd(BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(apo,matrix).asArray()),!satPosition._pathMasterPause);
+        // satPosition.apses.thinInstanceAdd(BABYLON.Matrix.Translation(...BABYLON.Vector3.TransformCoordinates(peri,matrix).asArray()),!satPosition._pathMasterPause);
+    }
+}
+// given a block of TLEs, yield the positions of newlines
+function findNthOccurrence(str, char, n, last = -1) {
+    let index = last;
+    for (let i = 0; i < n; i++) {
+        index = str.indexOf(char, index + 1);
+        if (index === -1) {
+            return -1; // Character not found or not enough occurrences
+        }
+    }
+    return index;
+}
+
+// from https://astronomy.stackexchange.com/a/28806
+// ECI
+function GetSunDirectionEci(date) {
+    //time = time.ToUniversalTime();   
+    //double JD = 367*time.Year-Math.Floor(7.0*(time.Year+Math.Floor((time.Month+9.0)/12.0))/4.0)+Math.Floor(275.0*time.Month/9.0)+time.Day+1721013.5+time.Hour/24.0+time.Minute/1440.0+time.Second/86400.0;
+    const JD = satellite.jday(date)
+    const pi = 3.14159265359;
+    const UT1 = (JD - 2451545) / 36525;
+    const longMSUN = 280.4606184 + 36000.77005361 * UT1;
+    const mSUN = 357.5277233 + 35999.05034 * UT1;
+    const ecliptic = longMSUN + 1.914666471 * Math.sin(mSUN * pi / 180) + 0.918994643 * Math.sin(2 * mSUN * pi / 180);
+    const eccen = 23.439291 - 0.0130042 * UT1;
+
+    const x = Math.cos(ecliptic * pi / 180);
+    const y = Math.cos(eccen * pi / 180) * Math.sin(ecliptic * pi / 180);
+    const z = Math.sin(eccen * pi / 180) * Math.sin(ecliptic * pi / 180);
+
+    return new BABYLON.Vector3(x, y, z);
+}
+
+function GetSunPositionEci(time) {
+    const sunDistance = 0.989 * 1.496E+8;
+    var sunPosition = GetSunDirectionEci(time);
+
+    sunPosition.scaleInPlace(sunDistance);
+
+    return sunPosition;
+}
+function GetSunDirectionEcf(date) {
+    //const utc = new Date()
+    //utc.setTime(date.getTime())// + 1000*12*60*60);
+    var sun = GetSunDirectionEci(date)//.reorderInPlace("XYZ")
+
+    const sunEcf = satellite.eciToEcf(sun, satellite.gstime(date));
+    sun.copyFromFloats(sunEcf.x, sunEcf.y, sunEcf.z);
+    return sun;
+}
+
+var msUpdate = 100;
+var simStepPerUpdate = msUpdate
+var simMultiplier = 1
+const updateSimStep = (xRealTime) => { simStepPerUpdate = xRealTime * msUpdate }
+const deltaSim = (deltaReal) => { simStepPerUpdate = simMultiplier * deltaReal }
+
+const satrecs = Array();
+const satmeshes = Array()//satrecs.map((satrec)=>        sphere.createInstance("")    )
+const sats = Array();
+
+function processTleList(text) {
+    var beg = -1;
+    var end = findNthOccurrence(text, "\n", 3, beg);
+
+    while (end != -1) {
+        const tle = text.slice(beg + 1, end).split('\n')
+        const satrec = satellite.twoline2satrec(tle[1].trim(), tle[2].trim())
+
+        sats.push(new satPosition(satrec, new Map([['OBJECT_NAME', tle[0].trim()]])))
+
+        beg = end
+        end = findNthOccurrence(text, "\n", 3, beg);
+    }
+    sats.sort((a, b) => stringCompare(a.name, b.name))
+    console.log(`Found ${sats.length} satellites`)
+}
+function processCsvList(text) {
+
+    console.log(text)
+    var stringsearch = '\n', count;
+    for (var i = count = 0; i < text.length; count += +(stringsearch === text[i++]));
+
+    console.log("newlines", count)
+    var beg = -1;
+    var end = findNthOccurrence(text, "\n", 1, beg);
+    // first line are headers 
+    const line = text.slice(beg + 1, end - 1)// (remove ending \n)  ; .split('\n')[0]
+    // convert to a map with key/value = name/index
+    //const headerMap = new Map(line.split(',').entries().map(e=[e[1],e[0]]))
+    const header = line.split(',');
+    console.log("header", header.join(','))
+
+    beg = end
+    end = findNthOccurrence(text, "\n", 1, beg);
+
+    while (end != -1) {
+        //const tle = text.slice(beg + 1, end).split('\n')
+        //const satrec = satellite.twoline2satrec(tle[1].trim(), tle[2].trim())
+        const elements = text.slice(beg + 1, end - 1).split(',')
+        //console.log(elements.join(','))
+        const elementMap = new Map(elements.map((v, i) => [header[i], v]))
+        //console.log(elementMap)
+        const satrec = celesTrakMap2satrec(elementMap)
+        //console.log(satrec)
+
+        sats.push(new satPosition(satrec, elementMap));//new Map(['NORAD_CAT_ID',tle[0].trim()])))
+
+        beg = end
+        end = findNthOccurrence(text, "\n", 1, beg);
+    }
+    sats.sort((a, b) => stringCompare(a.name, b.name))
+    console.log(`Found ${sats.length} satellites`)
+    console.log(sats)
+}
+// function processTle(line1, line2) {
+//     const satrec = satellite.twoline2satrec(line1, line2)//tle[1].trim(), tle[2].trim())
+//     satrecs.push(satrec)
+// }
+
+function getTles(callback) {
+    var tleDataTimeStamp = localStorage.getItem("tleDataTimeStamp");
+    var tleData = localStorage.getItem("tleData");
+    const nowTimestamp = new Date();
+    const ageInHours = (nowTimestamp - Date.parse(tleDataTimeStamp)) / (60 * 60 * 1000)
+
+    const force = false
+    if (!force && tleData && tleDataTimeStamp && (ageInHours < 4)) {
+        console.log(`Using local data from ${tleDataTimeStamp}`);
+        console.log(`as of ${new Date().toISOString()}, ${ageInHours} hours ago.`)
+        processTleList(tleData);
+        callback()
+    } else {
+
+        fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle",) // ACTIVE
+            .then((response) => response.text())
+            .then((text) => {
+                //console.log(text);
+                window.localStorage.setItem("tleData", text);
+                window.localStorage.setItem("tleDataTimeStamp", new Date().toISOString());
+
+                processTleList(text);
+                callback();
+            })
+    }
+}
+function compressLZW(text) {
+  const dictionary = {};
+  let data = text.split('');
+  let out = [];
+  let currentPhrase = data[0];
+  let code = 256;
+  for (let i = 1; i < data.length; i++) {
+    const nextChar = data[i];
+    const newPhrase = currentPhrase + nextChar;
+    if (dictionary[newPhrase] !== undefined) {
+      currentPhrase = newPhrase;
+    } else {
+      out.push(currentPhrase.length > 1 ? dictionary[currentPhrase] : currentPhrase.charCodeAt(0));
+      dictionary[newPhrase] = code;
+      code++;
+      currentPhrase = nextChar;
+    }
+  }
+  out.push(currentPhrase.length > 1 ? dictionary[currentPhrase] : currentPhrase.charCodeAt(0));
+  return out;
+}
+
+function decompressLZW(data) {
+  const dictionary = {};
+  let currentCode = 256;
+  let decoded = String.fromCharCode(data[0]);
+  let result = [decoded];
+  for (let i = 1; i < data.length; i++) {
+    const code = data[i];
+    let entry;
+    if (dictionary[code] !== undefined) {
+      entry = dictionary[code];
+    } else if (code === currentCode) {
+      entry = decoded + decoded.charAt(0);
+    } else {
+      entry = String.fromCharCode(code);
+    }
+    result.push(entry);
+    dictionary[currentCode] = decoded + entry.charAt(0);
+    currentCode++;
+    decoded = entry;
+  }
+  return result.join('');
+}
+function lzw_encode(s) {
+    if (!s) return s;
+    var dict = new Map(); // Use a Map!
+    var data = (s + "").split("");
+    var out = [];
+    var currChar;
+    var phrase = data[0];
+    var code = 256;
+    for (var i = 1; i < data.length; i++) {
+        currChar = data[i];
+        if (dict.has(phrase + currChar)) {
+            phrase += currChar;
+        } else {
+            out.push(phrase.length > 1 ? dict.get(phrase) : phrase.charCodeAt(0));
+            dict.set(phrase + currChar, code);
+            code++;
+            phrase = currChar;
+        }
+    }
+    out.push(phrase.length > 1 ? dict.get(phrase) : phrase.charCodeAt(0));
+    for (var i = 0; i < out.length; i++) {
+        out[i] = String.fromCharCode(out[i]);
+    }
+    return out.join("");
+}
+
+function lzw_decode(s) {
+    var dict = new Map(); // Use a Map!
+    var data = (s + "").split("");
+    var currChar = data[0];
+    var oldPhrase = currChar;
+    var out = [currChar];
+    var code = 256;
+    var phrase;
+    for (var i = 1; i < data.length; i++) {
+        var currCode = data[i].charCodeAt(0);
+        if (currCode < 256) {
+            phrase = data[i];
+        } else {
+            phrase = dict.has(currCode) ? dict.get(currCode) : (oldPhrase + currChar);
+        }
+        out.push(phrase);
+        currChar = phrase.charAt(0);
+        dict.set(code, oldPhrase + currChar);
+        code++;
+        oldPhrase = phrase;
+    }
+    return out.join("");
+}
+// By Mark Spronck. markspronck@gmail.com
+// Simple LZ compression and decompression JavaScript utility 
+// Usage
+// var data = Any javascript string
+// var compressed = LZipper.compress(data);  
+// var uncompressed = LZipper.decompress(compressed);
+
+
+var LZipper = (function () {
+    var fcc, API;
+    // just shorthand from char code.
+    fcc = String.fromCharCode;
+    API = {  // exposed interface for LZipper
+        compress : function( str ){ return str; },
+        decompress : function( str ){ return str; },    
+    };    
+    // converts a 16 bit javascript string 8 bit encoded string so that it can be converted to Base64
+    function data16to8Bit(str){
+        var i, outStr, len, c;
+        outStr = "";
+        len = str.length;
+        for(i = 0; i < len; i++){
+            c = str.charCodeAt(i);
+            outStr += String.fromCharCode((c >> 8) & 0xFF);
+            outStr += String.fromCharCode(c & 0xff);
+        }
+        return outStr;
+    }
+    // converts a 8 bit encoded string 16 bit javascript string.
+    function data8to16Bit(str){
+        var i, outStr, len, c;
+        outStr = "";
+        len = str.length;
+        for(i = 0; i < len; i++){
+            c = (str.charCodeAt(i) & 0xFF) << 8;
+            i ++;
+            if(i < len){
+                c += str.charCodeAt(i) & 0xFF;
+            }
+            outStr += String.fromCharCode(c);
+        }
+        return outStr;
+    }    
+    // function compress data
+    // data is a string
+    // returns a string
+    function compress( data ) {
+        function dec(numBits, v, noShift) {
+            var i, m = noShift ? 0xFFFFFFFFFFFF : 1;  // dictionary wont go over 48Bits??? 
+            for (i = 0; i < numBits; i++) {
+                val = (val << 1) | (v & m);
+                if (pos === 15) {
+                    pos = 0;
+                    str += fcc(val);
+                    val = 0;
+                } else {
+                    pos++;
+                }
+                if (noShift) {
+                    v = 0;
+                } else {
+                    v >>= 1;
+                }
+            }
+        }
+        if (data === null || data === undefined || data === "") {
+            return "";
+        }
+        var i, ii, f,c,w,wc,enlargeIn,dictSize,numBits,str,val,pos,len,dic;
+        len = data.length;        
+        dic = {};
+        c = w = wc = "";
+        w = "";
+        enlargeIn = numBits = 2;
+        dictSize = 3;
+        str = "";
+        val = pos = 0;
+
+        for (ii = 0; ii < len; ii += 1) {
+            c = data.charAt(ii);
+            if (dic[c] === undefined) {
+                dic[c] = {size:dictSize++,create:true};
+            }
+            wc = w + c;
+            if (dic[wc] !== undefined) {
+                w = wc;
+            } else {
+                if (dic[w].create) {
+                    if (w.charCodeAt(0) < 256) {
+                        dec(numBits, 0);
+                        dec(8, w.charCodeAt(0));
+                    } else {
+                        dec(numBits, 1, true)
+                        dec(16, w.charCodeAt(0));
+                    }
+                    enlargeIn--;
+                    if (enlargeIn === 0) {
+                        enlargeIn = Math.pow(2, numBits);
+                        numBits++;
+                    }
+                    dic[w].create = false;
+                } else {
+                    dec(numBits, dic[w].size);
+                }
+                enlargeIn--;
+                if (enlargeIn === 0) {
+                    enlargeIn = Math.pow(2, numBits);
+                    numBits++;
+                }
+                if(dic[wc] !== undefined){
+                    dic[wc].size = dictSize++;
+                }else{
+                    dic[wc] = {size:dictSize++,create:false};
+                }
+                w = String(c);
+            }
+        }
+        if (w !== "") {
+            if (dic[w].create) {
+                if (w.charCodeAt(0) < 256) {
+                    dec(numBits, 0);
+                    dec(8, w.charCodeAt(0));
+                } else {
+                    dec(numBits, 1, true)
+                    dec(16, w.charCodeAt(0));
+                }
+                enlargeIn--;
+                if (enlargeIn === 0) {
+                    enlargeIn = Math.pow(2, numBits);
+                    numBits++;
+                }
+                dic[w].create = false;
+            } else {
+                dec(numBits, dic[w].size);
+            }
+            enlargeIn--;
+            if (enlargeIn === 0) {
+                enlargeIn = Math.pow(2, numBits);
+                numBits++;
+            }
+        }
+        dec(numBits, 2);
+        while (true) {
+            val <<= 1;
+            if (pos == 15) {
+                str += fcc(val);
+                break;
+            } else {
+                pos++;
+            }
+        }
+        return str;
+    }
+    // function decompress
+    // cp is a string of compressed data
+    // returns an uncompressed string
+    function decompress(cp) {
+        var dic,len,s,w,bits,c,enlargeIn,dicSize,numBits,entry,result,str,val,pos,index;
+        function dec(maxP){
+            var p = 1,b = 0;
+            while (p != maxP) {
+                b |= ((val & pos) > 0 ? 1 : 0) * p;
+                p <<= 1;
+                pos >>= 1;
+                if (pos === 0) {
+                    pos = 32768;
+                    val = str.charCodeAt(index++);
+                }
+            }
+            return b;
+        }
+        if (cp === null || cp === "" || cp === undefined){ return "";}
+        dic = [0,1,2];
+        len = cp.length
+        s = [256,65536];
+        enlargeIn = dicSize = 4;
+        numBits = 3;
+        entry = result = "";
+        str = cp;
+        val = cp.charCodeAt(0);
+        pos = 32768;
+        index = 1;
+        
+        bits = dec(4);
+        if(bits === 2){ 
+            return ""; 
+        } else if(bits < 2){
+            bits = dec(s[bits]);
+            c = fcc(bits);
+        }
+        dic[3] = w = result = c;
+        while (true) {
+            if (index > len) { 
+                return ""; 
+            }
+            c = bits = dec(Math.pow(2, numBits));
+            if(bits === 2){ 
+                return result;  
+            } else if(bits < 2){
+                bits = dec(s[bits]);
+                dic[dicSize++] = fcc(bits);
+                c = dicSize - 1;
+                enlargeIn--;
+            }
+            if (enlargeIn === 0) {
+                enlargeIn = Math.pow(2, numBits);
+                numBits++;
+            }
+            if (dic[c]) {
+                entry = dic[c];
+            } else {
+                if (c === dicSize) {
+                    entry = w + w.charAt(0);
+                } else {
+                    return "";
+                }
+            }
+            result += entry;
+            dic[dicSize++] = w + entry.charAt(0);
+            enlargeIn--;
+            w = entry;
+            if (enlargeIn === 0) {
+                enlargeIn = Math.pow(2, numBits);
+                numBits++;
+            }
+        }
+    }    
+    if(typeof Map === 'function'){
+        API.compress = compress;
+        API.decompress = decompress;
+    }
+    API.int2Char = data16to8Bit;
+    API.char2Int = data8to16Bit;    
+    return API;
+})();
+
+function getCsv(callback) {
+    localStorage.setItem("tleDataTimeStamp", '');
+    localStorage.setItem("tleData", '');
+    var dataTimeStamp = localStorage.getItem("csvDataTimeStamp");
+    var data = localStorage.getItem("csvData");
+    const nowTimestamp = new Date();
+    const ageInHours = (nowTimestamp - Date.parse(dataTimeStamp)) / (60 * 60 * 1000)
+
+    const force = false;
+    if (!force && data && dataTimeStamp && (ageInHours < 4)) {
+        console.log(`Using local data from ${dataTimeStamp}`);
+        console.log(`as of ${new Date().toISOString()}, ${ageInHours} hours ago.`)
+        console.log("Stored data size",data.length)
+        data = LZipper.decompress(data)
+        console.log("Decompressed data size",data.length)
+        processCsvList(data);
+        callback();
+    } else {
+
+        //fetch("https://celestrak.org/pub/satcat.csv",) // ACTIVE
+        //fetch("https://celestrak.org/NORAD/elements/gp.php?NAME=%20&FORMAT=CSV",) // ACTIVE
+        fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=csv",) // ACTIVE
+            .then((response) => response.text())
+            .then((text) => {
+                //console.log(text);
+                console.log("Downloaded data size",text.length)
+                const data = LZipper.compress(text)
+                console.log("Stored data size",data.length)
+                window.localStorage.setItem("csvData", data);
+                window.localStorage.setItem("csvDataTimeStamp", new Date().toISOString());
+
+                processCsvList(text);
+                callback();
+            })
+    }
+}
+
+async function satOn(filter, addFlag, showPath) {
+    //getTles()
+    // filter.regime
+    //onOff.textBlock.text = "On"
+    //onOff.textBlock.color = "green"//BABYLON.Color3.Green().toColor4(0.3).toHexString()
+    filter = filter || (s => true);
+    //satOn(s.regimes.includes('GEOx'))
+
+    //console.log([...sats.map(s=>s.regimes.join())])
+    satPosition.visualClass.pausePositionUpdate = true
+    if (!addFlag) {
+        sats.forEach(s => { s.hideMesh(); s.label?.dispose(); if (s.pathMesh) { s.pathMesh.dispose(); s.pathMesh = null; } })
+        satPosition.PathClearAll();
+    }
+    //console.log([...sats.filter(filter).map(s => s.regimes.join())])
+    panelRightTable.emptyTable()
+    satPosition.pathMasterPause = true;
+    const filteredSats = sats.filter(filter)
+    filteredSats.forEach(s => { s.showMesh(); })
+    //filteredSats.forEach(s => {panelRightTable.addRow(s) })
+
+    makeTable(satPosition.enabledSats, panelRightTable)
+    if (showPath) filteredSats.forEach(s => { s.eciPathMatrixForCircleR1() })
+    satPosition.pathMasterPause = false;
+    satPosition.visualClass.pausePositionUpdate = false
+}
+// from https://stackoverflow.com/a/68739707
+function makeTable(iterator, table) {
+    return new Promise((resolve, reject) => {
+        if (!satPosition.enabledSatsTableDirty) return;
+        if (document.getElementById('table').style.display == 'none') return;
+        //console.log("creating table")
+        const fragment = new DocumentFragment();
+        for (let row of iterator) {
+            fragment.appendChild(table.getTableRow(row));
+        }
+        table.element.tBodies[0].appendChild(fragment);
+        satPosition.enabledSatsTableDirty = false;
+        //iterator.forEach(s => {panelRightTable.addRow(s) })
+
+        // if (type !== 'th' && type !== 'tr') {
+        //     reject(`Cell type must be either "th" or "tr" you passed "${type}"`);
+        // }
+
+
+        resolve('works');
+    });
+}
+function satOff() {
+    onOff.textBlock.text = "Off"
+    onOff.textBlock.color = "white"
+    satrecs.length = 0
+    satmeshes.forEach((m) => m.dispose());
+    satmeshes.length = 0;
+    satPosition.visualClass.DisableAll();
+    //sats.forEach(s => s.disable() )
+}
+function e2w(vector) {
+    var v1 = vector;
+    // YXZ
+    //v1 = BABYLON.Vector3.TransformCoordinates(v1,BABYLON.Matrix.RotationAxis(BABYLON.Axis.Z ,-Math.PI/2))
+    //v1 = BABYLON.Vector3.TransformCoordinates(v1,BABYLON.Matrix.RotationAxis(BABYLON.Axis.X ,-Math.PI/2))
+
+    //v1 = BABYLON.Vector3.TransformCoordinates(v1,BABYLON.Matrix.RotationAxis(BABYLON.Axis.Y ,-Math.PI/2))
+    //v1 = BABYLON.Vector3.TransformCoordinates(v1,BABYLON.Matrix.RotationAxis(BABYLON.Axis.Z ,-Math.PI/2))
+
+    //v1 = BABYLON.Vector3.TransformCoordinates(v1, BABYLON.Matrix.RotationYawPitchRoll(0, -Math.PI / 2, -Math.PI / 2))
+    //v1.x *=-1
+    //v1.y *=-1
+    // v2 = v1.clone()
+    // v1 = BABYLON.Vector3.TransformCoordinates(v1, BABYLON.Matrix.Scaling(-1/1000,-1/1000,-1/1000))
+    // v1 = BABYLON.Vector3.TransformCoordinates(v1, BABYLON.Matrix.RotationYawPitchRoll(0,Math.PI/2, Math.PI))
+
+    //console.log("v1a",v1)
+    // console.log("v1b",v1)
+    // v2 = BABYLON.Vector3.TransformCoordinates(v2, BABYLON.Matrix.RotationYawPitchRoll(0,Math.PI/2, Math.PI)).scaleInPlace(-1/1000)
+    // console.log("v2",v2)
+    //v1 = .scaleInPlace(-1/1000)
+
+    // var worldMatrix =
+    // BABYLON.Matrix.RotationYawPitchRoll(0,Math.PI/2, Math.PI)
+    // .multiplyInPlace(
+    //     BABYLON.Matrix.Scaling(-1/1000,-1/1000,-1/1000)
+    //     )
+
+
+    v1 = BABYLON.Vector3.TransformCoordinates(v1, satPosition.eciWorldMatrix)
+
+    return v1;
+}
+function eciWorldToEcfWorldQuaternionToRef(gmst, ref) {
+    // includes only rotation, not procession or nutation 
+    return BABYLON.Quaternion.RotationAxisToRef(BABYLON.Axis.Y, -gmst, ref)
+}
+function eciToEcfMatrix(gmst) {
+    // const X = (ecf.x * Math.cos(gmst)) - (ecf.y * Math.sin(gmst));
+    // const Y = (ecf.x * Math.sin(gmst)) + (ecf.y * Math.cos(gmst));
+    // const Z = ecf.z;
+    // equivalent to rotating around z axis by gmst
+    // from https://stackoverflow.com/a/14609567
+    const eciM = BABYLON.Matrix.RotationZ(gmst)
+    //eciM.multiplyToRef(satPosition.eciWorldMatrix,eciM)
+    //satPosition.eciWorldMatrix.multiplyToRef(eciM,eciM)
+    return eciM
+}
+function subsolarToggle(button) {
+    toggleButton(button)
+    if (subsolar) {
+        subsolar.dispose();
+        subsolar = null;
+        return;
+    }
+    const sunPath = Array()
+    var sunTime = new Date()
+    //sunTime.setTime(sunTime.getTime() - 1000*1*60*6);
+    var tempTime = new Date()
+    const numPoints = 360;
+    for (var i = 0; i <= numPoints; i++) {
+        tempTime.setTime(sunTime.getTime() + 1000 * 24 * 60 * 60 * i / numPoints);
+        //console.log(tempTime)
+        const sun = GetSunDirectionEcf(tempTime)
+
+        sunPath.push(e2w(sun).normalize().scaleInPlace(rEarth / 1000))
+        // HemisphericLight: light.setDirectionToTarget(e2w(sun))
+        //light.direction = e2w(sun).normalize()
+        //light.direction = sun.normalize()
+    }
+    subsolar = BABYLON.MeshBuilder.CreateLines("sun path", { points: sunPath })
+    subsolar.color = BABYLON.Color3.Yellow()
+    subsolar.parent = earth;
+}
+var timeDisplayElement;
+var panelRight = new panelList("right_list")
+var panelRightTable = new panelTable("right_table")
+
+toggleButton = (button, ...elementIds) => cssToggle(button, ...elementIds)
+//onclick=toggleButton(this,"settings")
+//onclick=toggleButton(this,"regimes")
+
+
+function cssToggle(button, ...elementIds) {
+    //console.log("toggling",button,elementIds)
+    button.classList.toggle("highlight");
+    if (elementIds?.length) {
+        for (var elementId of elementIds) panelRight.element.querySelector(`#${elementId}`).classList.toggle("invisible");
+    }
+    return button.classList.contains("highlight")
+}
+// .toggle(), .contains()
+function controlHtml() {
+    var styles = `
+    #bottom_nav {
+        width:100%;
+        position:fixed;
+        bottom:40px;
+        text-align:center;
+        color: white;
+        z-index:1;
+    }
+    #bottom_nav {
+        white-space-collapse: collapse;
+        text-wrap-mode: wrap;
+        /*background-color:red;*/
+        hyphens:none;
+    }
+    #time { white-space: nowrap }
+    #speed {
+        font-family: "Arial Narrow";/*,Arial,sans-serif; */
+        font-stretch: condensed;
+        font-size:9pt;
+        color: white;
+    }
+    #speed > span {
+        background-color: rgb(7, 55, 99);
+        color: white;
+        border: none;
+        cursor: pointer;
+        padding: 8px 4px 6px 4px;
+        margin: 1px;
+        text-decoration: none;
+    }
+    #speed > .highlight { background-color: green }
+    `
+    var styleSheet = document.createElement("style")
+    styleSheet.textContent = styles
+    document.head.appendChild(styleSheet);
+
+    timeDisplayElement = document.getElementById('bottom_nav')
+    if (!timeDisplayElement) {
+        timeDisplayElement = document.createElement(`div`)
+        timeDisplayElement.id = `bottom_nav`
+        document.body.appendChild(timeDisplayElement);
+    }
+
+    timeDisplayElement.innerHTML = [
+        `<span id="speed">`,
+        `<span onclick="incSpeed(-1)">-</span>`,
+        ...speedValues.map(s => `<span onclick="setSpeed(this.textContent)">${s}</span>`),
+        `<span onclick="incSpeed(1)">+</span>`,
+        `<span onclick="simTimeNow()">Now</span></span><span
+            id="time">Satellites in Orbit</span>`].join('')
+
+    timeDisplayElement = document.getElementById('time')
+    timeDisplayElement.innerHTML = `Satellites in Orbit`
+    const speedspan = document.getElementById('speed').children
+    var maxWidth = 0;
+    for (var s of speedspan) maxWidth = Math.max(maxWidth, s.getBoundingClientRect().width)
+    //console.log (maxWidth);
+    const newWidth = `${maxWidth}px`
+    for (var s of speedspan) {
+        s.style.width = newWidth;
+        s.style.display = `inline-block`;
+        //console.log(parseFloat(s.textContent))
+        if (parseFloat(s.textContent) > 0)
+            s.style.display = `none`;
+
+    }
+
+}
+
+function timeDisplay(date) {
+    bannerDisplay(date.toISOString())
+}
+function bannerDisplay(text) {
+    timeDisplayElement.innerHTML = text
+}
+var earth;
+// a copy of twoline2satrec from https://github.com/shashwatak/satellite-js/blob/develop/src/io.js
+// OBJECT_NAME,OBJECT_ID,EPOCH,MEAN_MOTION,ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,EPHEMERIS_TYPE,CLASSIFICATION_TYPE,NORAD_CAT_ID,ELEMENT_SET_NO,REV_AT_EPOCH,BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT
+//GPS BIIR-2  (PRN 13),1997-035A,2025-02-20T13:43:39.529056,2.00562592,.0086951,55.7574,117.4159,54.1767,306.6893,0,U,24876,999,20209,0,-.13E-6,0
+
+function celesTrakMap2satrec(elementMap) {
+    // compat to 4.0.0 (2016)
+    const mu = 398600.5; // in km3 / s2
+    const earthRadius = 6378.137; // in km
+    const xke = 60.0 / Math.sqrt((earthRadius * earthRadius * earthRadius) / mu);
+    const tumin = 1.0 / xke;
+
+    //  const elementArray = linestr.split(',')
+    //const getelement = (name)=>elementArray[headerMap.get(name)]
+    const getelement = (name) => elementMap.get(name)
+    const pi = Math.PI;
+    const deg2rad = pi / 180
+    const opsmode = 'i';
+
+    const xpdotp = 1440.0 / (2.0 * pi); // 229.1831180523293;
+    let year = 0;
+
+    const satrec = {};
+    satrec.error = 0;
+
+    satrec.satnum = getelement('NORAD_CAT_ID');
+
+    satrec.ndot = getelement('MEAN_MOTION_DOT');
+    satrec.nddot = getelement('MEAN_MOTION_DDOT');
+
+    satrec.bstar = +getelement('BSTAR');
+
+    satrec.inclo = getelement('INCLINATION');       // degrees         //parseFloat(longstr2.substring(8, 16));
+    satrec.nodeo = getelement('RA_OF_ASC_NODE');    // degrees         //parseFloat(longstr2.substring(17, 25));
+    satrec.argpo = getelement('ARG_OF_PERICENTER'); // degrees         //parseFloat(longstr2.substring(34, 42));
+    satrec.mo = getelement('MEAN_ANOMALY');      // degrees         //parseFloat(longstr2.substring(43, 51));
+    satrec.no = getelement('MEAN_MOTION');       // revolutions/day //parseFloat(longstr2.substring(52, 63));
+    satrec.ecco = +getelement('ECCENTRICITY');      // unitless, 0-1   //parseFloat(`.${longstr2.substring(26, 33)}`);
+    //console.log(satrec.ecco)
+    // ---- find no, ndot, nddot ----
+    satrec.no /= xpdotp; //   rad/min
+
+    // WHAT ABOUT UNITS OF NDOT and NDDOT???
+
+    // satrec.nddot= satrec.nddot * Math.pow(10.0, nexp);
+    // satrec.bstar= satrec.bstar * Math.pow(10.0, ibexp);
+
+    // ---- convert to sgp4 units ----
+    // satrec.ndot /= (xpdotp * 1440.0); // ? * minperday
+    // satrec.nddot /= (xpdotp * 1440.0 * 1440);
+
+    // ---- find standard orbital elements in radians ----
+    satrec.inclo *= deg2rad;
+    satrec.nodeo *= deg2rad;
+    satrec.argpo *= deg2rad;
+    satrec.mo *= deg2rad;
+
+    // GMS make compatible to last release (2016)
+    satrec.a = ((satrec.no * tumin) ** (-2.0 / 3.0));
+    satrec.ndot /= (xpdotp * 1440.0); // ? * minperday
+    satrec.nddot /= (xpdotp * 1440.0 * 1440);
+    satrec.alta = (satrec.a * (1.0 + satrec.ecco)) - 1.0;
+    satrec.altp = (satrec.a * (1.0 - satrec.ecco)) - 1.0;
+
+    // ----------------------------------------------------------------
+    // find sgp4epoch time of element set
+    // remember that sgp4 uses units of days from 0 jan 1950 (sgp4epoch)
+    // and minutes from the epoch (time)
+    // ----------------------------------------------------------------
+
+    // ---------------- temp fix for years from 1957-2056 -------------------
+    // --------- correct fix will occur when year is 4-digit in tle ---------
+
+    /*
+      if (satrec.epochyr < 57) {
+        year = satrec.epochyr + 2000;
+      } else {
+        year = satrec.epochyr + 1900;
+      }
+    
+      const mdhmsResult = days2mdhms(year, satrec.epochdays);
+    
+      const {
+        mon, day, hr, minute, sec,
+      } = mdhmsResult;
+      satrec.jdsatepoch = jday(year, mon, day, hr, minute, sec);
+    */
+    satrec.jdsatepoch = satellite.jday(new Date(getelement('EPOCH')))
+    //  ---------------- initialize the orbit at sgp4epoch -------------------
+    //console.log(satellite, Object.keys(satellite))
+    satellite.sgp4init(satrec, {
+        opsmode,
+        satn: satrec.satnum,
+        epoch: satrec.jdsatepoch - 2433281.5,
+        xbstar: satrec.bstar,
+        xecco: satrec.ecco,
+        xargpo: satrec.argpo,
+        xinclo: satrec.inclo,
+        xmo: satrec.mo,
+        xno: satrec.no,
+        xnodeo: satrec.nodeo,
+    });
+
+
+    return satrec;
+}
+//-------------------------------------------------------------------------------
+var simTime = new Date();
+function simTimeNow() { simTime = new Date(); }
+function toggleInset(button) {
+    if (toggleButton(button)) {
+        scene.activeCameras[0].viewport.width = .25;
+        scene.activeCameras[0].viewport.height = .25;
+    } else {
+        scene.activeCameras[0].viewport.width = 0;
+        scene.activeCameras[0].viewport.height = 0;
+    }
+
+}
+function showAllPaths() {
+    satPosition.pathMasterPause = true;
+    satPosition.enabledSats.forEach(s => { s.eciPathMatrixForCircleR1(); })
+    satPosition.pathMasterPause = false;
+}
+function reset() {
+    satPosition.visualClass.Reset();
+    if (satPosition._SatLine.sat) {
+        satPosition._SatLine.sat = null;
+    }
+    if (satPosition._SatLine.mesh) {
+        satPosition._SatLine.mesh.dispose();
+        satPosition._SatLine.mesh = null;
+    }
+    if (satPosition._SatLine.points) {
+        satPosition._SatLine.points = null;
+    }
+    sats.forEach((s) => { s.removeLabel() })
+    panelRightTable.unhighlightAll();
+    document.querySelectorAll('span.satlabel').forEach((label) => label.remove())
+}
+function toggleScale(button) {
+    const isOn = toggleButton(button)
+    if (isOn) setScaleAll(.25);
+    else setScaleAll(1);
+}
+function setScaleAll(scale) {
+    satPosition.visualClass.SetScaleAll(scale)
+}
+function regimeChange(event) {
+    // get text content, remove any "*"
+    //console.log("regime",event)
+    sats.forEach((s) => { s.removeLabel() })
+    const button = event.target?.closest('td')//?.textContent.replace(/\*$/, "");
+    const orbitName = button?.textContent.replace(/\*$/, "");
+    if (!orbitName) return;
+    const orbitNames = [orbitName, orbitName + '*']
+    const buttons = button.closest('table').querySelectorAll("td")
+
+    for (var i of buttons) {
+        if (orbitNames.includes(i.textContent)) {
+            i.classList.add("highlight")
+        } else {
+            i.classList.remove("highlight")
+        }
+    }
+
+    //button.classList.add("highlight")
+    //console.log("regime",orbitName,event,sats)
+    simTimeNow()
+    if (orbitName == "All") {
+        panelRight.element.querySelector("#all").textContent = "None"
+        satOn(s => true)
+        setSpeed('15m')
+
+    } else if (orbitName == "None") {
+        panelRight.element.querySelector("#all").textContent = "All"
+        satOn(s => false)
+        setSpeed('1s')
+    } else {
+        panelRight.element.querySelector("#all").textContent = "None"
+        if (orbitName == 'LEO') { setSpeed('1m'); setScaleAll(0.25); }
+        else { setSpeed('1h'); setScaleAll(1); }
+        //||!orbitDescriptions.map(r=>r[0]).includes(orbitName)) return;
+        for (var i = 0; orbitDescriptions[i][0] != orbitName; i++);
+        if (i < orbitDescriptions.length) {
+            var objectNames, visText;
+            [objectNames, visText] = orbitVisual.get(orbitName);
+            if (regimes)
+                for (var mesh of regimes) {
+                    console.log(mesh.name,objectNames)
+                    mesh.setEnabled(objectNames.includes(mesh.name))
+                }
+            //console.log(orbitDescriptions[i])
+            document.getElementById("orbitText").innerHTML = `
+            <span>${orbitDescriptions[i][0]}: ${orbitDescriptions[i][1]}</span><br/><span style="font-size:smaller">${orbitDescriptions[i][2]}</span><br/><span>Visual: ${visText}</span>`;
+            satOn(s => s.regimes.includes(orbitName), false, false);
+
+        }
+    }
+    //scene.constantlyUpdateMeshUnderPointer = true;
+
+}
+var createScene = async function () {
+    // // --+ => decompose => +++
+    // // -++ => decompose => +-+
+    // // +-+ => decompose => +-+
+    // // ++- => decompose => +-+
+    // var stest = BABYLON.Matrix.Scaling(1,1,-1);
+    // var s = BABYLON.Vector3.Zero();
+    // var r = new BABYLON.Quaternion();
+    // var t = BABYLON.Vector3.Zero();
+    // stest.decompose(s,r,t,false,false);     console.log("ff",s,r,t); // no error
+    // stest.decompose(s,r,t,false,true);    console.log("ft",s,r,t); // no error
+    // // stest.decompose(s,r,t,true,true);    console.log("tt",s,r,t); // error
+    // // stest.decompose(s,r,t,true,false);    console.log("tf",s,r,t); // error
+
+
+    var id = window.setInterval(function () { }, 0); // dummy setInterval
+    while (id) {
+        window.clearInterval(id--); // clearing intervals that where added before our dummy one
+    }
+
+    // This creates a basic Babylon Scene object (non-mesh)
+    var scene = new BABYLON.Scene(engine);
+    gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+    gui.layer.layerMask = 0x00000001
+    scene.clearColor = new BABYLON.Color3(0, 0, 0);
+
+    // create div overlay on canvas 
+    //divCanvas = document.createElement(`div`)
+    // follow size, posotion, z-index, disibility, display
+    //scene
+
+    //showOrbitRegimes()
+    //getGui();
+    satPosition.initializeClass(scene)
+    //satPosition.eciWorldMatrix.decompose(s,r,t,false,false);     console.log("ff",s,r,t); // no error
+
+    // const testmap = new Map();
+    // testmap.set("key1", [1, 2, 3]);
+    // testmap.set("key2", [4, 5, 6]);
+
+
+    const satjsurl = "https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.js"
+
+    let scriptEle = document.createElement("script");
+
+
+    fetch(satjsurl,) // ACTIVE
+        .then((response) => response.text())
+        .then((text) => {
+            text = text.replace("sgp4: sgp4,", "sgp4: sgp4,sgp4init: sgp4init,")
+            scriptEle.textContent = text;
+            document.head.appendChild(scriptEle);
+            afterSgp4Library()
+        })
+
+
+    if (false) {
+
+
+
+        scriptEle.setAttribute("src", satjsurl);
+
+        document.head.appendChild(scriptEle);
+
+        scriptEle.onload = afterSgp4Library
+    }
+    function afterSgp4Library() {
+        //satPosition.initializeClass(scene)
+        //subsolarToggle();
+        //getCsv(); 
+        const obj = Array();
+        for (var o in satellite) obj.push(satellite[o])
+        console.log("library", satellite, Object.keys(satellite), obj)
+
+        const callback = () => {
+            console.log("sats updating kep", sats.length)
+            sats.forEach(s => s.updateKeplerian())
+            //sats.sort((a,b)=>stringCompare(a.name,b.name));
+
+            //createHierarchy(sats)
+            //console.log(sats.slice(0,2).map(s=>s.name.split(/[ -]/,1)[0]))
+            //panelRight.setSelectionList(createHierarchy(sats,s=>s.name,s=>s.regimes.join(',')),(a)=>a.split(/, /,1)[0])
+            // function groupBy(interator,keyfn)
+            // setSelectionList (iterator,displayfn, valuefn, selectcb)
+            panelRight.setSelectionList(
+                groupBy(sats, s => s.regimes[0]),
+                (a) => a[1][0].regimes[0] + ` (${a[1].length})`,
+                (a) => a[1][0].regimes[0],
+                //(a)=>`satOn(s=>this.value in s.regimes)`
+                `satOn(s=>s.regimes.includes(this.value))`
+            )
+
+            scene.onBeforeRenderObservable.add((event, data) => {
+                //console.log("timestep",simTime,(simMultiplier||1)*event.deltaTime,event.deltaTime,event,data)
+                simTime.setTime(simTime.getTime() + (simMultiplier || 1) * (event.deltaTime || 0));
+                updateSim(simTime);
+                satPosition.visualClass.sphere?.thinInstanceRefreshBoundingInfo(false)
+                satPosition.UpdateLine()
+                satPosition.visualClass.UpdateFinalMatrix();
+                const p = BABYLON.Vector3.Zero();
+                const canvas = engine.getRenderingCanvas();
+                const rect = canvas.getBoundingClientRect()
+                const canvasOffset = new BABYLON.Vector3(rect.left, rect.top, 0)
+                // console.log(rect,canvasOffset.asArray(),rect.left,rect.top)
+
+                //console.log("label",canvasTopLeft)
+                satPosition.enabledSats.forEach((s) => {
+                    if (s.labelHTML) {
+                        BABYLON.Vector3.TransformCoordinatesToRef(s.visual.position, satPosition.visualClass.FinalMatrix, p)
+                        p.addInPlace(s.labelHTMLOffset)
+                        p.addInPlace(canvasOffset)
+                        s.labelHTML.style.left = `${p.x}px`;
+                        //console.log( `${p.x}px`,s.labelHTML.style)
+                        s.labelHTML.style.top = `${p.y}px`;
+
+                        //console.log("label",p.x,p.y)
+                    }
+
+                })
+
+            })
+        }
+        const useTle = false;
+        if (useTle) getTles(callback);
+        else getCsv(callback);
+    }
+
+    stringCompare = (a, b) => { if (a < b) return -1; if (b < a) return 1; return 0 } //(a<b)?-1:((b<a)?:1:0)
+
+
+    // from iterator, create map with keys of keyfn(element) and value of array of elements
+    function groupBy(iterator, keyfn) {
+        const grouped = new Map();
+        for (var element of iterator) {
+            const key = keyfn(element);
+            var group = grouped.get(key);
+            if (group) {
+                group.push(element);
+            } else {
+                grouped.set(key, Array.of(element)) // Array(1).fill(element)); Array.from([element]);
+            }
+        }
+        return grouped;
+    }
+    function sortedMapAsArray(map, sortfn) {
+        return Array.from(map).sort(sortfn)
+    }
+    function sortOrderChain(value, sortfnArray) {
+        var result = 0;
+        // return first non-zero
+        for (var sortfn of sortfnArray) {
+            result = sortfn(value);
+            if (result) return result;
+        }
+    }
+    //sortedMapAsArray(testmap, stringCompare)
+    // groupValuefn, groupLabelfn, groupSelectfn 
+
+    function createHierarchy(list, getElement = (s) => s.name, getGroup = (s) => { return s.name.split(/[ \.\-]/, 1)[0] }) {
+        hierarchy = new Map();
+        // function getGroup(s) {
+        //     if (s.match(/^[0-9]/)) return s.split(/[ \.\-]/,1)[0]
+        //     return s.split(/[ 0-9\.\-]/,1)[0]
+        // }
+
+        console.log(getGroup, getElement)
+        list.forEach((sat) => {
+            const element = getElement(sat)
+            const key = getGroup(sat)
+            // console.log("k/v",key,element,sat.name.split(/[ -]/,1)[0],sp(sat.name),typeof sat.name,getGroup(getElement(sat)),getElement(sat),sat)
+            var grouped = hierarchy.get(key)
+            if (grouped)
+                grouped.push(element)
+            else {
+                grouped = Array(1).fill(element)
+                hierarchy.set(key, grouped)
+            }
+
+        })
+        var keys = Array.from(hierarchy.keys())
+        keys.sort((a, b) => (hierarchy.get(b).length - hierarchy.get(a).length) || stringCompare(a, b))
+        return keys.map((k) => {
+            const fullNames = hierarchy.get(k)
+            const len = fullNames.length
+            return len == 1 ? `${fullNames[0]}` : `${k} (${len})`
+        })
+    }
+
+
+    controlHtml()
+    var ISS_TLE =
+        `1 25544U 98067A   25039.96162986  .00016131  00000+0  29064-3 0  9991
+         2 25544  51.6374 222.1245 0003546 290.1977 196.1848 15.49938732495274`
+    //processTle(...ISS_TLE.split('\n').map((s)=>s.trim()))
+
+    //sats.push(new satPosition(satellite.twoline2satrec(...ISS_TLE.split('\n').map((s)=>s.trim()))))
+    //sats[0].showEciPath()
+
+    var enabledUpdateIndex = 0; // partiupdate ortion lf enabled sats per interval
+
+    function updateSim(simTime) {
+
+
+        var sun;
+        timeDisplay(simTime)
+        if (!useEcf) {
+            sun = GetSunDirectionEci(simTime)
+            sun.normalize().scaleInPlace(-20)
+            light.direction = e2w(sun).normalize();
+            eciWorldToEcfWorldQuaternionToRef(satellite.gstime(simTime), earth.rotationQuaternion)
+        } else {
+            sun = GetSunDirectionEcf(simTime)
+            // orient earth
+            // TODO: not right. matbe needs e2w?
+            const axesEci = Array(new BABYLON.Vector3(1, 0, 0), new BABYLON.Vector3(0, 1, 0), new BABYLON.Vector3(0, 0, 1))
+            const gmst = satellite.gstime(simTime);
+            const axesEcf = axesEci.map((a) => {
+                const ecf = satellite.eciToEcf(a, gmst)
+                return new BABYLON.Vector3(ecf.x, ecf.y, ecf.z).normalize()
+            })
+            axesEci.forEach((v, i, a) => a[i].copyFrom(e2w(v).normalize()))
+            axesEcf.forEach((v, i, a) => a[i].copyFrom(e2w(v).normalize()))
+            // earth.rotationQuaternion=
+            //     BABYLON.Quaternion.RotationQuaternionFromAxis(...axesEci)
+            //     .multiplyInPlace(
+            //     BABYLON.Quaternion.RotationQuaternionFromAxis(...axesEcf).conjugateInPlace()
+            //     )
+
+            // (BABYLON.Quaternion.RotationQuaternionFromAxis(...axesEcf)//.conjugateInPlace()
+            // )//.multiplyInPlace(satPosition.eciWorldMatrix))//.invertInPlace())
+        }
+        sun.normalize().scaleInPlace(-20)
+        light.direction = e2w(sun).normalize(); // HemisphericLight: light.setDirectionToTarget(e2w(sun))
+        satPosition.visualClass.pausePositionUpdate = true;
+        for (var i = Math.min(20000, satPosition.enabledSats.length); i > 0; i--) {
+            //console.log(enabledUpdateIndex,satPosition.enabledSats)
+            satPosition.enabledSats[enabledUpdateIndex].update(simTime)
+            enabledUpdateIndex = (enabledUpdateIndex + 1) % satPosition.enabledSats.length
+        }
+        //satPosition.enabledSats.forEach((s) => s.update(simTime))
+        satPosition.visualClass.pausePositionUpdate = false;
+        updateCount++
+    }
+    // if(true) {
+    //     scene.onBeforeRenderObservable.add((event,data)=>{
+    //         //console.log("timestep",simTime,(simMultiplier||1)*event.deltaTime,event.deltaTime,event,data)
+    //         simTime.setTime(simTime.getTime() + (simMultiplier||1)*(event.deltaTime||0));
+    //         updateSim(simTime);
+    //     })
+    //     } else {
+    // setInterval(()=>{
+    //     simTime.setTime(simTime.getTime() + simStepPerUpdate);
+    //     updateSim(simTime);
+    // } , msUpdate)
+    // }
+    //sats[0].
+    // var _ = [{
+    //     "OBJECT_NAME": "ISS (ZARYA)",
+    //     "OBJECT_ID": "1998-067A",
+    //     "NORAD_CAT_ID": 25544,
+    //     "OBJECT_TYPE": "PAY",
+    //     "OPS_STATUS_CODE": "+",
+    //     "OWNER": "ISS",
+    //     "LAUNCH_DATE": "1998-11-20",
+    //     "LAUNCH_SITE": "TYMSC",
+    //     "DECAY_DATE": "",
+    //     "PERIOD": 92.91,
+    //     "INCLINATION": 51.64,
+    //     "APOGEE": 419,
+    //     "PERIGEE": 415,
+    //     "RCS": 399.0524,
+    //     "DATA_STATUS_CODE": "",
+    //     "ORBIT_CENTER": "EA",
+    //     "ORBIT_TYPE": "ORB"
+    // }]
+    //ISS (ZARYA)             
+    //1 25544U 98067A   25039.96162986  .00016131  00000+0  29064-3 0  9991
+    //2 25544  51.6374 222.1245 0003546 290.1977 196.1848 15.49938732495274
+    //1        1         2         3         4         5         6         7
+    //         inc     
+
+    if (typeof (Storage) === "undefined") {
+        console.log("no storage")
+
+        return;
+    }
+
+
+    const fetchOptions = {
+        method: 'GET',
+        //cache: 'only-if-cached',//'force-cache' // Example: Disables caching
+        cache: 'force-cache' // Example: Disables caching
+    }
+
+
+
+
+
+    // This targets the camera to scene origin
+    //camera1.setTarget(BABYLON.Vector3.Zero());@
+
+    // This attaches the camera to the canvas
+    //camera1.attachControl(canvas, true);
+
+    // This creates and positions a free camera (non-mesh)
+    camera = new BABYLON.ArcRotateCamera("Camera", -Math.PI, Math.PI / 2.2, 76, BABYLON.Vector3.Zero(), scene);
+    // fov = .8 
+    // beta 1.439
+    // This targets the camera to scene origin
+    camera.setTarget(BABYLON.Vector3.Zero());
+
+    // This attaches the camera to the canvas
+    camera.attachControl(canvas, true);
+
+
+
+    var cameraInset = new BABYLON.ArcRotateCamera("Camera", -Math.PI, Math.PI / 2.2, 76, BABYLON.Vector3.Zero(), scene);
+    cameraInset.layerMask = 0x00000002
+    cameraInset.minZ = 0.2;
+    cameraInset.viewport = new BABYLON.Viewport(0, 0.1, 0.25, 0.25);
+
+    //cameraInset.setEnabled(false)
+    // get viewport world: https://forum.babylonjs.com/t/camera-viewport-getting-corner-vectors/6887/5?u=higreg
+    //console.log("viewport w/h", cameraInset.viewport.width, cameraInset.viewport.height )
+    cameraInset.viewport.width = 0;
+    cameraInset.viewport.height = 0;
+
+    scene.activeCameras.push(cameraInset);
+    scene.activeCameras.push(camera);
+    scene.activeCamera = camera;
+
+
+    // This creates a light, aiming 0,1,0 - to the sky (non-mesh)
+    //var light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
+    //light.groundColor = new BABYLON.Color3(1, 1, 1);
+
+    // Default intensity is 1. Let's dim the light a small amount
+    //light.intensity = 0.7;
+
+    var light = new BABYLON.DirectionalLight("DirectionalLight", new BABYLON.Vector3(0, -1, 0), scene);
+    light.intensity = 4.0;
+    //light.needCube=false;
+    // Our built-in 'sphere' shape.
+    earth = BABYLON.MeshBuilder.CreateSphere("earth", {
+        diameter: 2 * rEarth / 1000, segments: 32,
+        //frontUVs: new BABYLON.Vector4(1, 1, 0, 0)
+    }, scene);
+    //earth.scaling.scaleInPlace(-1,-1,-1) 
+    earth.scaling = new BABYLON.Vector3(-1, -1, 1);
+    earth.bakeCurrentTransformIntoVertices();
+    earth.rotationQuaternion = BABYLON.Quaternion.Identity();
+    earth.isPickable = false;
+
+    const emat = new BABYLON.StandardMaterial("earth");
+    //emat.alpha = 0.4;
+    emat.diffuseTexture = new BABYLON.Texture("https://upload.wikimedia.org/wikipedia/commons/0/04/Solarsystemscope_texture_8k_earth_daymap.jpg", scene, undefined, true)
+    emat.diffuseTexture.level = 1.2;
+    emat.specularColor = new BABYLON.Color3(0, 0, 0);
+    emat.emissiveColor = new BABYLON.Color3(.30, .30, .30);
+
+
+    // default is Z near India, -Y north pole, -X near Africa
+    // default with invertY=false: is Z near India, Y north pole, -X near Africa
+
+    // need I/X near Africa, J/Y near India, and K/Z north pole
+
+    // with invertY and rotY pi/2 from ecf to world: Y=>Z, X=>Y, Z=>X
+    const ecfToWorldMatrix =
+        BABYLON.Matrix.RotationAxis(BABYLON.Axis.Z, -Math.PI / 2)
+            .multiplyInPlace(
+                BABYLON.Matrix.RotationAxis(BABYLON.Axis.X, -Math.PI / 2)
+            )
+
+    //ecfToWorldMatrix.decomposeToTransformNode(earth)
+
+    // -Z -> +X ; +X -> +Y ; -Y -> +Z
+    //earth.rotation.x = Math.PI/2
+    //earth.rotation.z = Math.PI
+    //earth.rotation.y = Math.PI / 2
+    //emat.diffuseTexture.vRotationCenter = 0.5
+    //emat.diffuseTexture.uAng = Math.PI /2
+    //emat.diffuseTexture.vAng = Math.PI /2
+    //emat.diffuseTexture.wAng = Math.PI /2
+    earth.material = emat;
+
+
+    //axesToggle()
+    //markersToggle()
+    //BABYLON.Vector3.TransformCoordinatesToRef(marker.position,ecfToWorldMatrix,marker.position)
+
+    // Move the sphere upward 1/2 its height
+    //sphere.position.y = 1;
+
+    // Our built-in 'ground' shape.
+    const eqSize = rEarth * 2 / 1000
+    //var ground = BABYLON.MeshBuilder.CreateGround("ground", {width: eqSize, height: eqSize}, scene);
+
+
+
+    var visTime = new Date();
+    const vecTemp = BABYLON.Vector3.Zero();
+
+
+    // var updateInterval = setInterval(() => {
+    //     while (satmeshes.length < satrecs.length) {
+    //         const sat = sphere.createInstance("");
+    //         sat.scaling.scaleInPlace(0.1);
+    //         satmeshes.push(sat);
+    //         //console.log("new sat")
+    //     }
+    //     visTime.setTime(visTime.getTime() + simStepPerUpdate);
+    //     const gmst = satellite.gstime(visTime);
+
+    //     const sun = GetSunDirectionEcf(visTime)
+    //     //console.log(sun)
+    //     sun.normalize().scaleInPlace(-20)
+    //     // HemisphericLight: light.setDirectionToTarget(e2w(sun))
+    //     light.direction = e2w(sun).normalize()
+    //     //light.direction = sun.normalize()
+    //     //light.direction = new BABYLON.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize()
+
+    //         timeDisplay(visTime) 
+    //     satrecs.forEach((satrec, i) => {
+    //         const eci = satellite.propagate(satrec, visTime);
+    //         if (!eci||! eci.position) return;
+    //         const ecfPosition = satellite.eciToEcf(eci.position, gmst);
+    //         if (!ecfPosition) return;
+    //         //console.log(eci.position)
+    //         vecTemp.copyFromFloats(ecfPosition.x, ecfPosition.y, ecfPosition.z).scaleInPlace(1 / 1000)
+    //         satmeshes[i].position.copyFrom(e2w(vecTemp))
+
+    //     })
+    // }, msUpdate);
+    //setInterval(() => {satOff()},5000)
+
+    const worldToScreen = function (x, y, z, engine, scene) {
+        vector3 = new BABYLON.Vector3(x, y, z)
+        var coordinates = BABYLON.Vector3.Project(vector3,
+            BABYLON.Matrix.Identity(),
+            scene.getTransformMatrix(),
+            camera.viewport.toGlobal(
+                engine.getRenderWidth(),
+                engine.getRenderHeight(),
+            )
+        );
+
+        return coordinates;
+    }
+    const screenToWorld = function (x, y, z, engine, scene) {
+        const screenPosition = new BABYLON.Vector3(x, y, z)
+        const viewMatrix = scene.getViewMatrix();
+        const projectionMatrix = scene.getProjectionMatrix();
+
+        if (!viewMatrix || !projectionMatrix) {
+            return BABYLON.Vector3.Zero();
+        }
+
+        const vector = BABYLON.Vector3.Unproject(
+            screenPosition,
+            engine.getRenderWidth(),
+            engine.getRenderHeight(),
+            BABYLON.Matrix.Identity(),
+            camera.getViewMatrix(),
+            camera.getProjectionMatrix()
+        );
+
+        return vector
+    }
+
+    function screenPointPick(satIterator, linePoint, lineDirection, distanceSquared) {
+
+
+        const a = linePoint; // screen point in world coord
+        const n = lineDirection; // unit vector in camera view direction
+
+        // distance^2 from point to line
+        // mag((a-p)-((a-p) dot n) n)^2
+
+
+        const d2 = (s) => {
+            //const p2a = a.subtract(s.position);
+            const p2a = a.subtract(s.position);
+            //p2a.subtractInPlace(n.scale(p2a.dot(n)));
+            console.log("n", n)
+            n.scaleAndAddToRef(-p2a.dot(n), p2a)
+            console.log("n", n)
+            return `${p2a.length()} ${s.satobject.name}`
+        } // [s.satobject.name,p2a.length()];}
+        console.log([...satIterator.map(d2)].join('\n'));
+        //satIterator.filter((s)=>distanceSquared>d2(s))
+    }
+    if (false) {
+        //scene.onPointerObservable.add((evt) => {//BABYLON.PointerEventTypes.POINTERPICK) => {
+        // might need to project all satellite positions with GetFinalMatrix, then test against screen point
+
+        scene.onPointerDown = (evt, pickInfo) => {//BABYLON.PointerEventTypes.POINTERPICK) => {
+
+            //const pickInfo = evt.pickInfo
+            console.log("pickInfo", evt, pickInfo, satPosition.visualClass.sphere)
+            console.log(pickInfo.thinInstanceIndex);
+
+            const satVisual = satPosition.visualClass.Pick(pickInfo)//?.pickedMesh?.metadata
+
+            if (!satVisual) return;
+            console.log("satVisual?", satVisual)
+            satVisual.select();
+            panelRightTable.highlightRowIndexById(satVisual.satobject.name, true)
+
+            bannerDisplay(`${satVisual.satobject.name} (${satVisual.satobject.satrec.satnum})`)
+        }//, BABYLON.PointerEventTypes.POINTERPICK)
+    } else if (false) {
+        scene.onPointerDown = (evt, pickInfo) => {
+
+            const mousePos3d = screenToWorld(evt.x, evt.y, 0.0, engine, scene);
+            const direction = camera.target.subtract(camera.globalPosition);
+            BABYLON.MeshBuilder.CreateLines("select line", { points: [mousePos3d, mousePos3d.add(direction)], updatable: true }, satPosition.scene);
+            //const s = BABYLON.MeshBuilder.CreateSphere("select", {diameter: 2*rEarth / 1000, segments: 32,}, scene)
+            s.position = mousePos3d.clone()
+            direction.normalize();
+            console.log("xy", evt.x, evt.y, camera.globalPosition, camera.position, camera.target, direction)
+            const distanceSquared = 1;
+            screenPointPick(satVisualThinInstances.instances, mousePos3d.clone(), direction, distanceSquared);
+        }
+    } else {
+        scene.onPointerUp = (evt, pickInfo) => {
+            const clickPoint = new BABYLON.Vector3(evt.offsetX, evt.offsetY, 0)
+            const logDistances = false;
+            if (logDistances) {
+                const distances = satVisualThinInstances.instances.map((vis) => {
+                    const visPosition = worldToScreen(...vis.position.asArray(), engine, scene)
+                    visPosition.z = 0;
+
+                    return `${visPosition.subtract(clickPoint, visPosition).length()} ${vis.satobject.name} ${visPosition.asArray()}`;
+                    return [vis.satobject.name, visPosition.subtract(clickPoint, visPosition).length(), visPosition]
+                })
+                console.log(`${clickPoint.asArray()}\n`, distances.join('\n'))
+            }
+
+            const screenPos = BABYLON.Vector3.Zero();
+
+            const finalMatrix = BABYLON.Matrix.GetFinalMatrix(
+                camera.viewport.toGlobal(
+                    engine.getRenderWidth(),
+                    engine.getRenderHeight(),
+                ),
+                BABYLON.Matrix.Identity(),
+                camera.getViewMatrix(),
+                camera.getProjectionMatrix(),
+                camera.minZ,
+                camera.maxZ,
+            )
+            const multiPick = false;
+            if (multiPick) {
+                satVisualThinInstances.instances.filter((vis) => {
+                    BABYLON.Vector3.TransformCoordinatesToRef(vis.position, finalMatrix, screenPos);
+                    return 20 > clickPoint.subtractFromFloats(screenPos.x, screenPos.y, 0).length()
+                    // const visPosition = worldToScreen(...vis.position.asArray(),engine,scene);
+                    // return 50>clickPoint.subtractFromFloats(visPosition.x,visPosition.y,0).length()
+                }).forEach((vis) => { vis.select(); vis.satobject.addLabel(); panelRightTable.highlightRowIndexById(vis.satobject.name, true) })
+            } else {
+                // depth sort
+                // const lengths = satVisualThinInstances.instances.map((vis)=>{
+                //     BABYLON.Vector3.TransformCoordinatesToRef(vis.position,finalMatrix,screenPos);
+                //     return [screenPos,vis.satobject]
+                // })
+                // length.sort((a,b)=>a[0].z-b[0].z)
+
+                // distance sort
+                const lengths = satVisualThinInstances.instances.map((vis) => {
+                    BABYLON.Vector3.TransformCoordinatesToRef(vis.position, finalMatrix, screenPos);
+                    return [clickPoint.subtractFromFloats(screenPos.x, screenPos.y, 0).length(), vis, screenPos.z]
+                }).filter(lv => lv[0] < 20)
+                if (lengths.length == 0) return;
+                // closest
+                lengths.sort((a, b) => a[2] - b[2])
+                Array.of(lengths[0][1]).forEach((vis) => { vis.select(); vis.satobject.addLabel(); panelRightTable.highlightRowIndexById(vis.satobject.name, true) })
+            }
+
+        }
+    }
+    await BABYLON.InitializeCSG2Async();
+    scene.updateTransformMatrix();
+
+    scene.onAfterRenderObservable.addOnce(() => {
+        const thin = satPosition.visualClass.sphere;
+        //console.log("thin data", thin,thin._thinInstanceDataStorage.matrixData ,thin._thinInstanceDataStorage.matrixBuffer)
+    })
+    scene.onAfterRenderObservable.addOnce(() => {
+
+        // console.log("scene transform",
+        // scene.getProjectionMatrix()?.asArray(),
+        // scene.getViewMatrix()?.asArray(),
+        // scene.getTransformMatrix()?.asArray(),
+        // )
+        scene.activeCameras.forEach(c => {
+            // console.log(
+            //     [...c.getProjectionMatrix().asArray()],
+            //     [...c.getTransformationMatrix().asArray()],
+            //     [...c.getViewMatrix().asArray()],
+            //     [...c.getWorldMatrix().asArray()],
+            // )
+
+        })
+    })
+
+    return scene;
+};
+var onOff;
+// was 1s, 1m, 15m, 30m, 1h, 2h, 4h, 6h
+const speedValues = ["1s", "4s", "15s", "1m", "4m", "15m", "1h", "4h", "6h", "8h", "12h"]
+var currentSpeedIndex = 0;
+// speedValues.indexOf(speed);
+
+function incSpeed(incVal) {
+
+    //console.log(incVal,currentSpeedIndex,speedValues[currentSpeedIndex])
+    const speedButtons = document.getElementById('speed').children
+    for (var b of document.getElementById('speed').children) if (parseFloat(b.textContent > 0)) b.style.display = `none`;
+    speedButtons[currentSpeedIndex + 1].style.display = `none`;
+
+    //s.style.display = `inline-block`;s.style.display=`none`;
+
+    currentSpeedIndex += incVal;
+    // clamp value: 0 < value < speedValues.length-1
+    currentSpeedIndex = Math.max(0, Math.min(speedValues.length - 1, currentSpeedIndex))
+    speedButtons[currentSpeedIndex + 1].style.display = `inline-block`;
+    //console.log(incVal,currentSpeedIndex,speedValues[currentSpeedIndex])
+    setSpeed(speedValues[currentSpeedIndex]);
+}
+function setSpeed(text) {
+    currentSpeedIndex = Math.max(0, speedValues.indexOf(text));
+    const speedButtons = document.querySelectorAll("#speed > span");
+    for (var button of speedButtons) {
+        if (button.textContent == text) {
+            button.classList.add("highlight")
+        } else {
+            button.classList.remove("highlight")
+        }
+    }
+
+    for (var b of document.getElementById('speed').children) if (parseFloat(b.textContent) > 0) b.style.display = `none`;
+    speedButtons[currentSpeedIndex + 1].style.display = `inline-block`;
+
+    letterVal = { "s": 1, "m": 60, "h": 60 * 60, "d": 60 * 60 * 24, "w": 60 * 60 * 24 * 7 }
+    const match = text.match(/^(\d+)([a-zA-Z]\s*$)/);
+    simMultiplier = match ? (letterVal[match[2]] || 1) * match[1] : 1
+    updateSimStep(simMultiplier)
+}
+
+function getGui() {
+    var gui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+
+    var panel = new BABYLON.GUI.StackPanel("panel");
+    panel.isVertical = true;
+    panel.width = "60px";
+    panel.left = "20px"
+    panel.top = "20px"
+    panel.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+    panel.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+    gui.addControl(panel)
+    const bOptions = { height: "25px", color: "white", horizontalAlignment: BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT }
+    onOff = BABYLON.GUI.Button.CreateSimpleButton("onOff", "Off");
+    onOff = Object.assign(onOff, { ...bOptions });
+    onOff.onPointerClickObservable.add((vec2info) => {
+        if (onOff.textBlock.text == "Off") {
+            onOff.textBlock.text = "On"
+            satOn();
+        } else {
+            onOff.textBlock.text = "Off"
+            satOff();
+        }
+    });
+    panel.addControl(onOff)
+
+
+    var speed = BABYLON.GUI.Button.CreateSimpleButton("speed1s", "1s");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 1; updateSimStep(1) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed1m", "1m");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 60; updateSimStep(60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed15m", "15m");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 15 * 60; updateSimStep(15 * 60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed30m", "30m");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 30 * 60; updateSimStep(30 * 60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed1h", "1h");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 60 * 60; updateSimStep(60 * 60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed2h", "2h");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 2 * 60 * 60; updateSimStep(2 * 60 * 60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed4h", "4h");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 4 * 60 * 60; updateSimStep(4 * 60 * 60) });
+    panel.addControl(speed)
+
+    speed = BABYLON.GUI.Button.CreateSimpleButton("speed1d", "6h");
+    speed = Object.assign(speed, { ...bOptions });
+    speed.onPointerClickObservable.add((vec2info) => { simMultiplier = 6 * 60 * 60; updateSimStep(6 * 60 * 60) });
+    panel.addControl(speed)
+
+
+    // 1s, 1m, 1h, 1d
+    return gui;
+
+
+    const min = -2 * Math.PI;
+    const max = 4 * Math.PI;
+    const common = { parent: panel, minimum: min, maximum: max, value: min, width: "30px", height: "200px", isVertical: true }//,paddingLeft:"0px"}
+
+    const sInit = [0, 135 * 2 * Math.PI / 360]
+    sliderInit = [...sInit, ...sInit, ...sInit,]
+    var sliders = Array()
+    for (var i = 0; i < 6; i++) {
+        const slider = Object.assign(new BABYLON.GUI.Slider("slider" + i), { ...common, value: sliderInit[i] })
+        slider.onValueChangedObservable.add(() => rebuildWedge())
+        panel.addControl(slider)
+        sliders.push(slider)
+    }
+}
+                window.initFunction = async function() {
+                    
+                    
+                    
+                    var asyncEngineCreation = async function() {
+                        try {
+                        return createDefaultEngine();
+                        } catch(e) {
+                        console.log("the available createEngine function failed. Creating the default engine instead");
+                        return createDefaultEngine();
+                        }
+                    }
+
+                    window.engine = await asyncEngineCreation();
+                    
+                    const engineOptions = window.engine.getCreationOptions?.();
+                    if (!engineOptions || engineOptions.audioEngine !== false) {
+                        
+                    }
+        if (!engine) throw 'engine should not be null.';
+        startRenderLoop(engine, canvas);
+        window.scene = createScene();};
+        initFunction().then(() => {scene.then(returnedScene => { sceneToRender = returnedScene; });
+        
+                    });
+
+                    // Resize
+                    window.addEventListener("resize", function () {
+                        engine.resize();
+                    });
+        </script>
+    </body>
+</html>
